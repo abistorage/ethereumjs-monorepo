@@ -315,7 +315,7 @@ export class EthProtocol extends Protocol {
       td:
         this.chain.blocks.td === BigInt(0) ? Buffer.from([]) : bigIntToBuffer(this.chain.blocks.td),
       bestHash: this.chain.blocks.latest!.hash(),
-      genesisHash: this.chain.genesis.hash,
+      genesisHash: this.chain.genesis.hash(),
       latestBlock: bigIntToBuffer(this.chain.blocks.latest!.header.number),
     }
   }
