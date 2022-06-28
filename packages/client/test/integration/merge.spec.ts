@@ -1,18 +1,19 @@
-import tape from 'tape'
-import Blockchain from '@ethereumjs/blockchain'
+import * as tape from 'tape'
+import Blockchain, { CliqueConsensus } from '@ethereumjs/blockchain'
 import Common, {
   Chain as ChainCommon,
   ConsensusType,
   ConsensusAlgorithm,
   Hardfork,
 } from '@ethereumjs/common'
-import { BN, Address } from 'ethereumjs-util'
+import { Address } from '@ethereumjs/util'
 import { Config } from '../../lib/config'
 import { Chain } from '../../lib/blockchain'
 import { FullEthereumService } from '../../lib/service'
 import { Event } from '../../lib/types'
 import MockServer from './mocks/mockserver'
 import { setup, destroy } from './util'
+import { BlockHeader } from '@ethereumjs/block'
 
 tape('[Integration:Merge]', async (t) => {
   const commonPoA = Common.custom(
@@ -37,20 +38,13 @@ tape('[Integration:Merge]', async (t) => {
     },
     { baseChain: ChainCommon.Goerli }
   )
-  // set genesis stateRoot for this custom common
-  // that's derived after generateCanonicalGenesis()
-  ;(commonPoA as any)._chainParams['genesis'].stateRoot =
-    '0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421'
   const commonPoW = Common.custom(
     {
       genesis: {
-        hash: '0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d',
-        timestamp: null,
         gasLimit: 16777216,
         difficulty: 1,
         nonce: '0x0000000000000042',
         extraData: '0x3535353535353535353535353535353535353535353535353535353535353535',
-        stateRoot: '0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421',
       },
       hardforks: [
         { name: 'london', block: 0 },
@@ -78,7 +72,7 @@ tape('[Integration:Merge]', async (t) => {
       validateBlocks: false,
       validateConsensus: false,
     })
-    blockchain.cliqueActiveSigners = () => [accounts[0][0]] // stub
+    ;(blockchain.consensus as CliqueConsensus).cliqueActiveSigners = () => [accounts[0][0]] // stub
     const serviceConfig = new Config({
       common,
       servers: [server as any],
@@ -105,14 +99,18 @@ tape('[Integration:Merge]', async (t) => {
       height: 0,
       common: commonPoA,
     })
-    remoteService.chain.blockchain.cliqueActiveSigners = () => [accounts[0][0]] // stub
+    ;(remoteService.chain.blockchain.consensus as CliqueConsensus).cliqueActiveSigners = () => [
+      accounts[0][0],
+    ] // stub
+    BlockHeader.prototype._consensusFormatValidation = () => {} //stub
     await server.discover('remotePeer1', '127.0.0.2')
-    const targetTTD = new BN(5)
+    const targetTTD = BigInt(5)
     remoteService.config.events.on(Event.SYNC_SYNCHRONIZED, async () => {
       const { td } = remoteService.chain.headers
-      if (td.eq(targetTTD)) {
-        t.ok(
-          remoteService.chain.headers.td.eq(targetTTD),
+      if (td === targetTTD) {
+        t.equal(
+          remoteService.chain.headers.td,
+          targetTTD,
           'synced blocks to the merge successfully'
         )
         // Make sure the miner has stopped
@@ -121,7 +119,7 @@ tape('[Integration:Merge]', async (t) => {
         await destroy(remoteServer, remoteService)
         t.end()
       }
-      if (td.gt(targetTTD)) {
+      if (td > targetTTD) {
         t.fail('chain should not exceed merge TTD')
       }
     })
@@ -137,16 +135,17 @@ tape('[Integration:Merge]', async (t) => {
       common: commonPoW,
     })
     await server.discover('remotePeer1', '127.0.0.2')
-    const targetTTD = new BN(1000)
-    let terminalHeight: BN | undefined
+    const targetTTD = BigInt(1000)
+    let terminalHeight: bigint | undefined
     remoteService.config.events.on(Event.CHAIN_UPDATED, async () => {
       const { height, td } = remoteService.chain.headers
-      if (td.gt(targetTTD)) {
+      if (td > targetTTD) {
         if (!terminalHeight) {
           terminalHeight = height
         }
-        t.ok(
-          remoteService.chain.headers.height.eq(terminalHeight),
+        t.equal(
+          remoteService.chain.headers.height,
+          terminalHeight,
           'synced blocks to the merge successfully'
         )
         // Make sure the miner has stopped
@@ -155,7 +154,7 @@ tape('[Integration:Merge]', async (t) => {
         await destroy(remoteServer, remoteService)
         t.end()
       }
-      if (terminalHeight?.lt(height)) {
+      if (terminalHeight && terminalHeight < height) {
         t.fail('chain should not exceed merge terminal block')
       }
     })

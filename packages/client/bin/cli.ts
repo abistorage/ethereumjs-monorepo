@@ -1,28 +1,34 @@
 #!/usr/bin/env node
 
 import { homedir } from 'os'
-import path from 'path'
-import readline from 'readline'
+import * as path from 'path'
+import * as readline from 'readline'
 import { randomBytes } from 'crypto'
 import { existsSync } from 'fs'
 import { ensureDirSync, readFileSync, removeSync } from 'fs-extra'
-import Common, { Chain, Hardfork } from '@ethereumjs/common'
-import { _getInitializedChains } from '@ethereumjs/common/dist/chains'
-import { Address, toBuffer, BN } from 'ethereumjs-util'
-import { parseMultiaddrs, parseGenesisState, parseCustomParams } from '../lib/util'
+import Blockchain from '@ethereumjs/blockchain'
+import Common, { Chain, Hardfork, ConsensusAlgorithm } from '@ethereumjs/common'
+import { Address, toBuffer } from '@ethereumjs/util'
+import {
+  parseMultiaddrs,
+  parseGenesisState,
+  parseCustomParams,
+  setCommonForkHashes,
+} from '../lib/util'
 import EthereumClient from '../lib/client'
 import { Config, DataDirectory, SyncMode } from '../lib/config'
 import { Logger, getLogger } from '../lib/logging'
 import { startRPCServers, helprpc } from './startRpc'
-import type { Chain as IChain, GenesisState } from '@ethereumjs/common/dist/types'
 import type { FullEthereumService } from '../lib/service'
-const level = require('level')
+import { GenesisState } from '@ethereumjs/blockchain/dist/genesisStates'
+import { Level } from 'level'
+import { AbstractLevel } from 'abstract-level'
 const yargs = require('yargs/yargs')
 const { hideBin } = require('yargs/helpers')
 
 type Account = [address: Address, privateKey: Buffer]
 
-const networks = Object.entries(_getInitializedChains().names)
+const networks = Object.entries(Common._getInitializedChains().names)
 
 let logger: Logger
 
@@ -230,8 +236,8 @@ const args = yargs(hideBin(process.argv))
     default: false,
   })
   .option('unlock', {
-    describe: `Path to file where private key (without 0x) is stored or comma separated list of accounts to unlock - 
-      currently only the first account is used (for sealing PoA blocks and as the default coinbase). 
+    describe: `Path to file where private key (without 0x) is stored or comma separated list of accounts to unlock -
+      currently only the first account is used (for sealing PoA blocks and as the default coinbase).
       You will be prompted for a 0x-prefixed private key if you pass a list of accounts
       FOR YOUR SAFETY PLEASE DO NOT USE ANY ACCOUNTS HOLDING SUBSTANTIAL AMOUNTS OF ETH`,
     string: true,
@@ -270,21 +276,25 @@ const args = yargs(hideBin(process.argv))
 /**
  * Initializes and returns the databases needed for the client
  */
-function initDBs(config: Config) {
+function initDBs(config: Config): {
+  chainDB: AbstractLevel<string | Buffer | Uint8Array, string | Buffer, string | Buffer>
+  stateDB: AbstractLevel<string | Buffer | Uint8Array, string | Buffer, string | Buffer>
+  metaDB: AbstractLevel<string | Buffer | Uint8Array, string | Buffer, string | Buffer>
+} {
   // Chain DB
   const chainDataDir = config.getDataDirectory(DataDirectory.Chain)
   ensureDirSync(chainDataDir)
-  const chainDB = level(chainDataDir)
+  const chainDB = new Level<string | Buffer, string | Buffer>(chainDataDir)
 
   // State DB
   const stateDataDir = config.getDataDirectory(DataDirectory.State)
   ensureDirSync(stateDataDir)
-  const stateDB = level(stateDataDir)
+  const stateDB = new Level<string | Buffer, string | Buffer>(stateDataDir)
 
   // Meta DB (receipts, logs, indexes, skeleton chain)
   const metaDataDir = config.getDataDirectory(DataDirectory.Meta)
   ensureDirSync(metaDataDir)
-  const metaDB = level(metaDataDir)
+  const metaDB = new Level<string | Buffer, string | Buffer>(metaDataDir)
 
   return { chainDB, stateDB, metaDB }
 }
@@ -328,17 +338,17 @@ async function executeBlocks(client: EthereumClient) {
  */
 async function startBlock(client: EthereumClient) {
   if (!args.startBlock) return
-  const startBlock = new BN(args.startBlock)
+  const startBlock = BigInt(args.startBlock)
   const { blockchain } = client.chain
-  const height = (await blockchain.getLatestHeader()).number
-  if (height.eq(startBlock)) return
-  if (height.lt(startBlock)) {
+  const height = (await blockchain.getCanonicalHeadHeader()).number
+  if (height === startBlock) return
+  if (height < startBlock) {
     logger.error(`Cannot start chain higher than current height ${height}`)
     process.exit()
   }
   try {
     const headBlock = await blockchain.getBlock(startBlock)
-    const delBlock = await blockchain.getBlock(startBlock.addn(1))
+    const delBlock = await blockchain.getBlock(startBlock + BigInt(1))
     await blockchain.delBlock(delBlock.hash())
     logger.info(`Chain height reset to ${headBlock.header.number}`)
   } catch (err: any) {
@@ -350,15 +360,31 @@ async function startBlock(client: EthereumClient) {
 /**
  * Starts and returns the {@link EthereumClient}
  */
-async function startClient(config: Config) {
+async function startClient(config: Config, customGenesisState?: GenesisState) {
   config.logger.info(`Data directory: ${config.datadir}`)
   if (config.lightserv) {
     config.logger.info(`Serving light peer requests`)
   }
 
   const dbs = initDBs(config)
+
+  let blockchain
+  if (customGenesisState) {
+    const validateConsensus = config.chainCommon.consensusAlgorithm() === ConsensusAlgorithm.Clique
+    blockchain = await Blockchain.create({
+      db: dbs.chainDB,
+      genesisState: customGenesisState,
+      common: config.chainCommon,
+      hardforkByHeadBlockNumber: true,
+      validateBlocks: true,
+      validateConsensus,
+    })
+    setCommonForkHashes(config.chainCommon, blockchain.genesisBlock.hash())
+  }
+
   const client = new EthereumClient({
     config,
+    blockchain,
     ...dbs,
   })
 
@@ -379,7 +405,7 @@ async function startClient(config: Config) {
 }
 
 /**
- * Returns a configured common for devnet with a prefunded address
+ * Returns a configured blockchain and common for devnet with a prefunded address
  */
 async function setupDevnet(prefundAddress: Address) {
   const addr = prefundAddress.toString().slice(2)
@@ -426,13 +452,13 @@ async function setupDevnet(prefundAddress: Address) {
     alloc: { [addr]: { balance: '0x10000000000000000000' } },
   }
   const chainParams = await parseCustomParams(chainData, 'devnet')
-  const genesisState = await parseGenesisState(chainData)
-  const customChainParams: [IChain, GenesisState][] = [[chainParams, genesisState]]
-  return new Common({
+  const customGenesisState = await parseGenesisState(chainData)
+  const common = new Common({
     chain: 'devnet',
-    customChains: customChainParams,
+    customChains: [chainParams],
     hardfork: Hardfork.London,
   })
+  return { common, customGenesisState }
 }
 
 /**
@@ -534,6 +560,7 @@ async function run() {
     accounts.push(...(await inputAccounts()))
   }
 
+  let customGenesisState: GenesisState | undefined
   let common = new Common({ chain, hardfork: Hardfork.Chainstart })
 
   if (args.dev) {
@@ -545,13 +572,13 @@ async function run() {
       accounts.push(generateAccount())
     }
     const prefundAddress = accounts[0][0]
-    common = await setupDevnet(prefundAddress)
+    ;({ common, customGenesisState } = await setupDevnet(prefundAddress))
   }
 
   // Configure common based on args given
   if (
     (args.customChainParams || args.customGenesisState || args.gethGenesis) &&
-    (!(args.network === 'mainnet') || args.networkId)
+    (args.network !== 'mainnet' || args.networkId)
   ) {
     console.error('cannot specify both custom chain parameters and preset network ID')
     process.exit()
@@ -564,10 +591,10 @@ async function run() {
     }
     try {
       const customChainParams = JSON.parse(readFileSync(args.customChain, 'utf-8'))
-      const genesisState = JSON.parse(readFileSync(args.customGenesisState, 'utf-8'))
+      customGenesisState = JSON.parse(readFileSync(args.customGenesisState, 'utf-8'))
       common = new Common({
         chain: customChainParams.name,
-        customChains: [[customChainParams, genesisState]],
+        customChains: [customChainParams],
       })
     } catch (err: any) {
       console.error(`invalid chain parameters: ${err.message}`)
@@ -578,11 +605,11 @@ async function run() {
     const genesisFile = JSON.parse(readFileSync(args.gethGenesis, 'utf-8'))
     const chainName = path.parse(args.gethGenesis).base.split('.')[0]
     const genesisParams = await parseCustomParams(genesisFile, chainName)
-    const genesisState = genesisFile.alloc ? await parseGenesisState(genesisFile) : {}
     common = new Common({
       chain: genesisParams.name,
-      customChains: [[genesisParams, genesisState]],
+      customChains: [genesisParams],
     })
+    customGenesisState = await parseGenesisState(genesisFile)
   }
 
   if (args.mine && accounts.length === 0) {
@@ -629,7 +656,7 @@ async function run() {
   })
   config.events.setMaxListeners(50)
 
-  const client = await startClient(config)
+  const client = await startClient(config, customGenesisState)
   const servers = args.rpc || args.rpcEngine ? startRPCServers(client, args) : []
 
   process.on('SIGINT', async () => {

@@ -11,28 +11,23 @@ import {
 import {
   Account,
   Address,
-  BN,
   bufferToHex,
-  bnToHex,
+  bigIntToHex,
   intToHex,
-  rlp,
   toBuffer,
   setLengthLeft,
   toType,
   TypeOutput,
-} from 'ethereumjs-util'
+} from '@ethereumjs/util'
+import RLP from 'rlp'
 import { middleware, validators } from '../validation'
 import { INTERNAL_ERROR, INVALID_PARAMS, PARSE_ERROR } from '../error-code'
 import { RpcTx } from '../types'
 import { EthereumService, FullEthereumService } from '../../service'
 import type VM from '@ethereumjs/vm'
-import type {
-  PostByzantiumTxReceipt,
-  PreByzantiumTxReceipt,
-  TxReceipt,
-} from '@ethereumjs/vm/dist/types'
-import type { Log } from '@ethereumjs/vm/dist/evm/types'
-import type { Proof } from '@ethereumjs/vm/dist/state'
+import type { PostByzantiumTxReceipt, PreByzantiumTxReceipt, TxReceipt } from '@ethereumjs/vm'
+import type { Log } from '@ethereumjs/evm'
+import type { Proof } from '@ethereumjs/statemanager'
 import type { EthereumClient } from '../..'
 import type { Chain } from '../../blockchain'
 import type { EthProtocol } from '../../net/protocol'
@@ -136,7 +131,7 @@ const jsonRpcTx = (tx: TypedTransaction, block?: Block, txIndex?: number): JsonR
   const txJSON = tx.toJSON()
   return {
     blockHash: block ? bufferToHex(block.hash()) : null,
-    blockNumber: block ? bnToHex(block.header.number) : null,
+    blockNumber: block ? bigIntToHex(block.header.number) : null,
     from: tx.getSenderAddress().toString(),
     gas: txJSON.gasLimit!,
     gasPrice: txJSON.gasPrice ?? txJSON.maxFeePerGas!,
@@ -184,7 +179,7 @@ const jsonRpcBlock = async (
     receiptsRoot: header.receiptTrie!,
     miner: header.coinbase!,
     difficulty: header.difficulty!,
-    totalDifficulty: bnToHex(td),
+    totalDifficulty: bigIntToHex(td),
     extraData: header.extraData!,
     size: intToHex(Buffer.byteLength(JSON.stringify(json))),
     gasLimit: header.gasLimit!,
@@ -211,7 +206,7 @@ const jsonRpcLog = async (
   transactionIndex: txIndex !== undefined ? intToHex(txIndex) : null,
   transactionHash: tx ? bufferToHex(tx.hash()) : null,
   blockHash: block ? bufferToHex(block.hash()) : null,
-  blockNumber: block ? bnToHex(block.header.number) : null,
+  blockNumber: block ? bigIntToHex(block.header.number) : null,
   address: bufferToHex(log[0]),
   topics: log[1].map((t) => bufferToHex(t as Buffer)),
   data: bufferToHex(log[2]),
@@ -222,8 +217,8 @@ const jsonRpcLog = async (
  */
 const jsonRpcReceipt = async (
   receipt: TxReceipt,
-  gasUsed: BN,
-  effectiveGasPrice: BN,
+  gasUsed: bigint,
+  effectiveGasPrice: bigint,
   block: Block,
   tx: TypedTransaction,
   txIndex: number,
@@ -233,12 +228,12 @@ const jsonRpcReceipt = async (
   transactionHash: bufferToHex(tx.hash()),
   transactionIndex: intToHex(txIndex),
   blockHash: bufferToHex(block.hash()),
-  blockNumber: bnToHex(block.header.number),
+  blockNumber: bigIntToHex(block.header.number),
   from: tx.getSenderAddress().toString(),
   to: tx.to?.toString() ?? null,
-  cumulativeGasUsed: bnToHex(new BN(receipt.gasUsed)),
-  effectiveGasPrice: bnToHex(effectiveGasPrice),
-  gasUsed: bnToHex(gasUsed),
+  cumulativeGasUsed: bigIntToHex(receipt.cumulativeBlockGasUsed),
+  effectiveGasPrice: bigIntToHex(effectiveGasPrice),
+  gasUsed: bigIntToHex(gasUsed),
   contractAddress: contractAddress?.toString() ?? null,
   logs: await Promise.all(
     receipt.logs.map((l, i) => jsonRpcLog(l, block, tx, txIndex, logIndex + i))
@@ -264,17 +259,17 @@ const getBlockByOption = async (blockOpt: string, chain: Chain) => {
   }
 
   let block: Block
-  const latest = chain.blocks.latest ?? (await chain.getLatestBlock())
+  const latest = chain.blocks.latest ?? (await chain.getCanonicalHeadBlock())
 
   if (blockOpt === 'latest') {
     block = latest
   } else if (blockOpt === 'earliest') {
-    block = await chain.getBlock(new BN(0))
+    block = await chain.getBlock(BigInt(0))
   } else {
-    const blockNumber = new BN(toBuffer(blockOpt))
-    if (blockNumber.eq(latest.header.number)) {
+    const blockNumber = BigInt(blockOpt)
+    if (blockNumber === latest.header.number) {
       block = latest
-    } else if (blockNumber.gt(latest.header.number)) {
+    } else if (blockNumber > latest.header.number) {
       throw {
         code: INVALID_PARAMS,
         message: 'specified block greater than current height',
@@ -418,7 +413,7 @@ export class Eth {
    * @param params An empty array
    */
   async blockNumber(_params = []) {
-    return bnToHex(this._chain.headers.latest?.number ?? new BN(0))
+    return bigIntToHex(this._chain.headers.latest?.number ?? BigInt(0))
   }
 
   /**
@@ -442,7 +437,7 @@ export class Eth {
       throw new Error('missing vm')
     }
 
-    const vm = this._vm.copy()
+    const vm = await this._vm.copy()
     await vm.stateManager.setStateRoot(block.header.stateRoot)
 
     const { from, to, gas: gasLimit, gasPrice, value, data } = transaction
@@ -451,12 +446,12 @@ export class Eth {
       const runCallOpts = {
         caller: from ? Address.fromString(from) : undefined,
         to: to ? Address.fromString(to) : undefined,
-        gasLimit: toType(gasLimit, TypeOutput.BN),
-        gasPrice: toType(gasPrice, TypeOutput.BN),
-        value: toType(value, TypeOutput.BN),
+        gasLimit: toType(gasLimit, TypeOutput.BigInt),
+        gasPrice: toType(gasPrice, TypeOutput.BigInt),
+        value: toType(value, TypeOutput.BigInt),
         data: data ? toBuffer(data) : undefined,
       }
-      const { execResult } = await vm.runCall(runCallOpts)
+      const { execResult } = await vm.evm.runCall(runCallOpts)
       return bufferToHex(execResult.returnValue)
     } catch (error: any) {
       throw {
@@ -472,8 +467,8 @@ export class Eth {
    * @returns The chain ID.
    */
   async chainId(_params = []) {
-    const chainId = this._chain.config.chainCommon.chainIdBN()
-    return bnToHex(chainId)
+    const chainId = this._chain.config.chainCommon.chainId()
+    return bigIntToHex(chainId)
   }
 
   /**
@@ -500,12 +495,12 @@ export class Eth {
       throw new Error('missing vm')
     }
 
-    const vm = this._vm.copy()
+    const vm = await this._vm.copy()
     await vm.stateManager.setStateRoot(block.header.stateRoot)
 
     if (!transaction.gas) {
       // If no gas limit is specified use the last block gas limit as an upper bound.
-      const latest = await this._chain.getLatestHeader()
+      const latest = await this._chain.getCanonicalHeadHeader()
       transaction.gas = latest.gasLimit as any
     }
 
@@ -519,13 +514,13 @@ export class Eth {
     }
 
     try {
-      const { gasUsed } = await vm.runTx({
+      const { totalGasSpent } = await vm.runTx({
         tx,
         skipNonce: true,
         skipBalance: true,
         skipBlockGasLimitValidation: true,
       })
-      return bnToHex(gasUsed)
+      return `0x${totalGasSpent.toString(16)}`
     } catch (error: any) {
       throw {
         code: INTERNAL_ERROR,
@@ -549,10 +544,10 @@ export class Eth {
       throw new Error('missing vm')
     }
 
-    const vm = this._vm.copy()
+    const vm = await this._vm.copy()
     await vm.stateManager.setStateRoot(block.header.stateRoot)
     const account = await vm.stateManager.getAccount(address)
-    return bnToHex(account.balance)
+    return bigIntToHex(account.balance)
   }
 
   /**
@@ -618,7 +613,7 @@ export class Eth {
       throw new Error('missing vm')
     }
 
-    const vm = this._vm.copy()
+    const vm = await this._vm.copy()
     await vm.stateManager.setStateRoot(block.header.stateRoot)
 
     const address = Address.fromString(addressHex)
@@ -641,14 +636,18 @@ export class Eth {
       throw new Error('missing vm')
     }
 
-    const vm = this._vm.copy()
+    const vm = await this._vm.copy()
     await vm.stateManager.setStateRoot(block.header.stateRoot)
 
     const address = Address.fromString(addressHex)
     const storageTrie = await (vm.stateManager as any)._getStorageTrie(address)
     const position = setLengthLeft(toBuffer(positionHex), 32)
     const storage = await storageTrie.get(position)
-    return storage ? bufferToHex(setLengthLeft(rlp.decode(storage), 32)) : '0x'
+    return storage
+      ? bufferToHex(
+          setLengthLeft(Buffer.from(RLP.decode(Uint8Array.from(storage)) as Uint8Array), 32)
+        )
+      : '0x'
   }
 
   /**
@@ -689,12 +688,12 @@ export class Eth {
       throw new Error('missing vm')
     }
 
-    const vm = this._vm.copy()
+    const vm = await this._vm.copy()
     await vm.stateManager.setStateRoot(block.header.stateRoot)
 
     const address = Address.fromString(addressHex)
     const account: Account = await vm.stateManager.getAccount(address)
-    return bnToHex(account.nonce)
+    return bigIntToHex(account.nonce)
   }
 
   /**
@@ -712,11 +711,11 @@ export class Eth {
    */
   async getUncleCountByBlockNumber(params: [string]) {
     const [blockNumberHex] = params
-    const blockNumber = new BN(toBuffer(blockNumberHex))
+    const blockNumber = BigInt(blockNumberHex)
     const latest =
-      this._chain.headers.latest?.number ?? (await this._chain.getLatestHeader()).number
+      this._chain.headers.latest?.number ?? (await this._chain.getCanonicalHeadHeader()).number
 
-    if (blockNumber.gt(latest)) {
+    if (blockNumber > latest) {
       throw {
         code: INVALID_PARAMS,
         message: 'specified block greater than current height',
@@ -748,22 +747,26 @@ export class Eth {
       const parentBlock = await this._chain.getBlock(block.header.parentHash)
       const tx = block.transactions[txIndex]
       const effectiveGasPrice = tx.supports(Capability.EIP1559FeeMarket)
-        ? BN.min(
-            (tx as FeeMarketEIP1559Transaction).maxPriorityFeePerGas,
-            (tx as FeeMarketEIP1559Transaction).maxFeePerGas.sub(block.header.baseFeePerGas!)
-          ).add(block.header.baseFeePerGas!)
+        ? (tx as FeeMarketEIP1559Transaction).maxPriorityFeePerGas <
+          (tx as FeeMarketEIP1559Transaction).maxFeePerGas - block.header.baseFeePerGas!
+          ? (tx as FeeMarketEIP1559Transaction).maxPriorityFeePerGas
+          : (tx as FeeMarketEIP1559Transaction).maxFeePerGas -
+            block.header.baseFeePerGas! +
+            block.header.baseFeePerGas!
         : (tx as Transaction).gasPrice
 
       // Run tx through copied vm to get tx gasUsed and createdAddress
-      const runBlockResult = await this._vm!.copy().runBlock({
+      const runBlockResult = await (
+        await this._vm!.copy()
+      ).runBlock({
         block,
         root: parentBlock.header.stateRoot,
         skipBlockValidation: true,
       })
-      const { gasUsed, createdAddress } = runBlockResult.results[txIndex]
+      const { totalGasSpent, createdAddress } = runBlockResult.results[txIndex]
       return jsonRpcReceipt(
         receipt,
-        gasUsed,
+        totalGasSpent,
         effectiveGasPrice,
         block,
         tx,
@@ -805,12 +808,12 @@ export class Eth {
       }
     } else {
       if (fromBlock === 'earliest') {
-        from = await this._chain.getBlock(new BN(0))
+        from = await this._chain.getBlock(BigInt(0))
       } else if (fromBlock === 'latest' || fromBlock === undefined) {
         from = this._chain.blocks.latest!
       } else {
-        const blockNum = new BN(toBuffer(fromBlock))
-        if (blockNum.gt(this._chain.headers.height)) {
+        const blockNum = BigInt(fromBlock)
+        if (blockNum > this._chain.headers.height) {
           throw {
             code: INVALID_PARAMS,
             message: 'specified `fromBlock` greater than current height',
@@ -823,8 +826,8 @@ export class Eth {
       } else if (toBlock === 'latest' || toBlock === undefined) {
         to = this._chain.blocks.latest!
       } else {
-        const blockNum = new BN(toBuffer(toBlock))
-        if (blockNum.gt(this._chain.headers.height)) {
+        const blockNum = BigInt(toBlock)
+        if (blockNum > this._chain.headers.height) {
           throw {
             code: INVALID_PARAMS,
             message: 'specified `toBlock` greater than current height',
@@ -834,7 +837,8 @@ export class Eth {
       }
     }
     if (
-      to.header.number.sub(from.header.number).gtn(this.receiptsManager.GET_LOGS_BLOCK_RANGE_LIMIT)
+      to.header.number - from.header.number >
+      BigInt(this.receiptsManager.GET_LOGS_BLOCK_RANGE_LIMIT)
     ) {
       throw {
         code: INVALID_PARAMS,
@@ -957,7 +961,7 @@ export class Eth {
       throw new Error('missing vm')
     }
 
-    const vm = this._vm.copy()
+    const vm = await this._vm.copy()
 
     if (!('getProof' in vm.stateManager)) {
       throw new Error('getProof RPC method not supported with the StateManager provided')
@@ -983,16 +987,17 @@ export class Eth {
       return false
     }
 
-    const currentBlockHeader = this._chain.headers?.latest ?? (await this._chain.getLatestHeader())
-    const currentBlock = bnToHex(currentBlockHeader.number)
+    const currentBlockHeader =
+      this._chain.headers?.latest ?? (await this._chain.getCanonicalHeadHeader())
+    const currentBlock = bigIntToHex(currentBlockHeader.number)
 
     const synchronizer = this.client.services[0].synchronizer
     const { syncTargetHeight } = this.client.config
-    const startingBlock = bnToHex(synchronizer.startingBlock)
+    const startingBlock = bigIntToHex(synchronizer.startingBlock)
 
     let highestBlock
     if (syncTargetHeight) {
-      highestBlock = bnToHex(syncTargetHeight)
+      highestBlock = bigIntToHex(syncTargetHeight)
     } else {
       const bestPeer = await synchronizer.best()
       if (!bestPeer) {
@@ -1008,7 +1013,7 @@ export class Eth {
           message: `highest block header unavailable`,
         }
       }
-      highestBlock = bnToHex(highestBlockHeader.number)
+      highestBlock = bigIntToHex(highestBlockHeader.number)
     }
 
     return { startingBlock, currentBlock, highestBlock }

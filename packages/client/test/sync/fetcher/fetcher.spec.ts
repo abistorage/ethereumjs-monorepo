@@ -1,6 +1,5 @@
-import tape from 'tape'
-import td from 'testdouble'
-import { BN } from 'ethereumjs-util'
+import * as tape from 'tape'
+import * as td from 'testdouble'
 import { Config } from '../../../lib/config'
 import { Fetcher } from '../../../lib/sync/fetcher/fetcher'
 import { Job } from '../../../lib/sync/fetcher/types'
@@ -27,7 +26,7 @@ tape('[Fetcher]', (t) => {
     fetcher.wait = td.func<FetcherTest['wait']>()
     td.when(fetcher.wait()).thenResolve(undefined)
     ;(fetcher as any).success(job, undefined)
-    t.equals((fetcher as any).in.size(), 1, 'enqueued job')
+    t.equals((fetcher as any).in.length, 1, 'enqueued job')
     setTimeout(() => t.ok(job.peer.idle, 'peer idled'), 10)
   })
 
@@ -40,7 +39,7 @@ tape('[Fetcher]', (t) => {
     fetcher.next = td.func<FetcherTest['next']>()
     config.events.on(Event.SYNC_FETCHER_ERROR, (err) => t.equals(err.message, 'err0', 'got error'))
     ;(fetcher as any).failure(job as Job<any, any, any>, new Error('err0'))
-    t.equals((fetcher as any).in.size(), 1, 'enqueued job')
+    t.equals((fetcher as any).in.length, 1, 'enqueued job')
   })
 
   t.test('should handle expiration', (t) => {
@@ -67,7 +66,7 @@ tape('[Fetcher]', (t) => {
     fetcher.next()
     setTimeout(() => {
       t.deepEquals(job, { index: 0, peer: { idle: false }, state: 'expired' }, 'expired job')
-      t.equals((fetcher as any).in.size(), 1, 'enqueued job')
+      t.equals((fetcher as any).in.length, 1, 'enqueued job')
     }, 20)
   })
 
@@ -84,9 +83,9 @@ tape('[Fetcher]', (t) => {
     ;(fetcher as any).in.insert(job1)
     ;(fetcher as any).in.insert(job2)
     ;(fetcher as any).in.insert(job3)
-    t.equals((fetcher as any).in.size(), 3, 'queue filled')
+    t.equals((fetcher as any).in.length, 3, 'queue filled')
     fetcher.clear()
-    t.equals((fetcher as any).in.size(), 0, 'queue cleared')
+    t.equals((fetcher as any).in.length, 0, 'queue cleared')
     const job4 = { index: 3 }
     const job5 = { index: 4 }
 
@@ -103,7 +102,7 @@ tape('[Fetcher]', (t) => {
     t.plan(1)
     const config = new Config({ transports: [] })
     const fetcher = new FetcherTest({ config, pool: td.object(), timeout: 5000 })
-    const task = { first: new BN(50), count: 10 }
+    const task = { first: BigInt(50), count: 10 }
     const job: any = { peer: {}, task, state: 'active', index: 0 }
     fetcher.next = td.func<FetcherTest['next']>()
     fetcher.write()
@@ -114,7 +113,10 @@ tape('[Fetcher]', (t) => {
     )
     ;(fetcher as any).success(job, ['something'])
     setTimeout(() => {
-      t.ok((fetcher as any).in.peek().task.first.eqn(1), 'should step back for safeReorgDistance')
+      t.ok(
+        (fetcher as any).in.peek().task.first === BigInt(1),
+        'should step back for safeReorgDistance'
+      )
     }, 20)
   })
 

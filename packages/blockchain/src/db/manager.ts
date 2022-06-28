@@ -1,13 +1,22 @@
-import { Address, BN, rlp } from 'ethereumjs-util'
+import { arrToBufArr, bufferToBigInt } from '@ethereumjs/util'
+import RLP from 'rlp'
 import { Block, BlockHeader, BlockOptions, BlockBuffer, BlockBodyBuffer } from '@ethereumjs/block'
 import Common from '@ethereumjs/common'
-import { CliqueLatestSignerStates, CliqueLatestVotes, CliqueLatestBlockSigners } from '../clique'
+import { AbstractLevel } from 'abstract-level'
 import Cache from './cache'
 import { DatabaseKey, DBOp, DBTarget, DBOpData } from './operation'
 
-// eslint-disable-next-line implicit-dependencies/no-implicit
-import type { LevelUp } from 'levelup'
-const level = require('level-mem')
+class NotFoundError extends Error {
+  public code: string = 'LEVEL_NOT_FOUND'
+
+  constructor(blockNumber: bigint) {
+    super(`Key ${blockNumber.toString()} was not found`)
+
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, this.constructor)
+    }
+  }
+}
 
 /**
  * @hidden
@@ -28,9 +37,12 @@ export type CacheMap = { [key: string]: Cache<Buffer> }
 export class DBManager {
   private _cache: CacheMap
   private _common: Common
-  private _db: LevelUp
+  private _db: AbstractLevel<string | Buffer | Uint8Array, string | Buffer, string | Buffer>
 
-  constructor(db: LevelUp, common: Common) {
+  constructor(
+    db: AbstractLevel<string | Buffer | Uint8Array, string | Buffer, string | Buffer>,
+    common: Common
+  ) {
     this._db = db
     this._common = common
     this._cache = {
@@ -47,9 +59,9 @@ export class DBManager {
    */
   async getHeads(): Promise<{ [key: string]: Buffer }> {
     const heads = await this.get(DBTarget.Heads)
-    Object.keys(heads).forEach((key) => {
+    for (const key of Object.keys(heads)) {
       heads[key] = Buffer.from(heads[key])
-    })
+    }
     return heads
   }
 
@@ -68,74 +80,12 @@ export class DBManager {
   }
 
   /**
-   * Fetches clique signers.
-   */
-  async getCliqueLatestSignerStates(): Promise<CliqueLatestSignerStates> {
-    try {
-      const signerStates = await this.get(DBTarget.CliqueSignerStates)
-      const states = (<any>rlp.decode(signerStates)) as [Buffer, Buffer[]]
-      return states.map((state) => {
-        const blockNum = new BN(state[0])
-        const addrs = (<any>state[1]).map((buf: Buffer) => new Address(buf))
-        return [blockNum, addrs]
-      }) as CliqueLatestSignerStates
-    } catch (error: any) {
-      if (error.type === 'NotFoundError') {
-        return []
-      }
-      throw error
-    }
-  }
-
-  /**
-   * Fetches clique votes.
-   */
-  async getCliqueLatestVotes(): Promise<CliqueLatestVotes> {
-    try {
-      const signerVotes = await this.get(DBTarget.CliqueVotes)
-      const votes = (<any>rlp.decode(signerVotes)) as [Buffer, [Buffer, Buffer, Buffer]]
-      return votes.map((vote) => {
-        const blockNum = new BN(vote[0])
-        const signer = new Address((vote[1] as any)[0])
-        const beneficiary = new Address((vote[1] as any)[1])
-        const nonce = (vote[1] as any)[2]
-        return [blockNum, [signer, beneficiary, nonce]]
-      }) as CliqueLatestVotes
-    } catch (error: any) {
-      if (error.type === 'NotFoundError') {
-        return []
-      }
-      throw error
-    }
-  }
-
-  /**
-   * Fetches snapshot of clique signers.
-   */
-  async getCliqueLatestBlockSigners(): Promise<CliqueLatestBlockSigners> {
-    try {
-      const blockSigners = await this.get(DBTarget.CliqueBlockSigners)
-      const signers = (<any>rlp.decode(blockSigners)) as [Buffer, Buffer][]
-      return signers.map((s) => {
-        const blockNum = new BN(s[0])
-        const signer = new Address(s[1] as any)
-        return [blockNum, signer]
-      }) as CliqueLatestBlockSigners
-    } catch (error: any) {
-      if (error.type === 'NotFoundError') {
-        return []
-      }
-      throw error
-    }
-  }
-
-  /**
    * Fetches a block (header and body) given a block id,
    * which can be either its hash or its number.
    */
-  async getBlock(blockId: Buffer | BN | number): Promise<Block> {
+  async getBlock(blockId: Buffer | bigint | number): Promise<Block> {
     if (typeof blockId === 'number' && Number.isInteger(blockId)) {
-      blockId = new BN(blockId)
+      blockId = BigInt(blockId)
     }
 
     let number
@@ -143,7 +93,7 @@ export class DBManager {
     if (Buffer.isBuffer(blockId)) {
       hash = blockId
       number = await this.hashToNumber(blockId)
-    } else if (BN.isBN(blockId)) {
+    } else if (typeof blockId === 'bigint') {
       number = blockId
       hash = await this.numberToHash(blockId)
     } else {
@@ -155,16 +105,16 @@ export class DBManager {
     try {
       body = await this.getBody(hash, number)
     } catch (error: any) {
-      if (error.type !== 'NotFoundError') {
+      if (error.code !== 'LEVEL_NOT_FOUND') {
         throw error
       }
     }
     const blockData = [header.raw(), ...body] as BlockBuffer
     const opts: BlockOptions = { common: this._common }
-    if (number.isZero()) {
+    if (number === BigInt(0)) {
       opts.hardforkByBlockNumber = true
     } else {
-      opts.hardforkByTD = await this.getTotalDifficulty(header.parentHash, number.subn(1))
+      opts.hardforkByTD = await this.getTotalDifficulty(header.parentHash, number - BigInt(1))
     }
     return Block.fromValuesArray(blockData, opts)
   }
@@ -172,22 +122,22 @@ export class DBManager {
   /**
    * Fetches body of a block given its hash and number.
    */
-  async getBody(blockHash: Buffer, blockNumber: BN): Promise<BlockBodyBuffer> {
+  async getBody(blockHash: Buffer, blockNumber: bigint): Promise<BlockBodyBuffer> {
     const body = await this.get(DBTarget.Body, { blockHash, blockNumber })
-    return rlp.decode(body) as any as BlockBodyBuffer
+    return arrToBufArr(RLP.decode(Uint8Array.from(body))) as BlockBodyBuffer
   }
 
   /**
    * Fetches header of a block given its hash and number.
    */
-  async getHeader(blockHash: Buffer, blockNumber: BN) {
+  async getHeader(blockHash: Buffer, blockNumber: bigint) {
     const encodedHeader = await this.get(DBTarget.Header, { blockHash, blockNumber })
     const opts: BlockOptions = { common: this._common }
-    if (blockNumber.isZero()) {
+    if (blockNumber === BigInt(0)) {
       opts.hardforkByBlockNumber = true
     } else {
-      const parentHash = await this.numberToHash(blockNumber.subn(1))
-      opts.hardforkByTD = await this.getTotalDifficulty(parentHash, blockNumber.subn(1))
+      const parentHash = await this.numberToHash(blockNumber - BigInt(1))
+      opts.hardforkByTD = await this.getTotalDifficulty(parentHash, blockNumber - BigInt(1))
     }
     return BlockHeader.fromRLPSerializedHeader(encodedHeader, opts)
   }
@@ -195,25 +145,25 @@ export class DBManager {
   /**
    * Fetches total difficulty for a block given its hash and number.
    */
-  async getTotalDifficulty(blockHash: Buffer, blockNumber: BN): Promise<BN> {
+  async getTotalDifficulty(blockHash: Buffer, blockNumber: bigint): Promise<bigint> {
     const td = await this.get(DBTarget.TotalDifficulty, { blockHash, blockNumber })
-    return new BN(rlp.decode(td))
+    return bufferToBigInt(Buffer.from(RLP.decode(Uint8Array.from(td)) as Uint8Array))
   }
 
   /**
    * Performs a block hash to block number lookup.
    */
-  async hashToNumber(blockHash: Buffer): Promise<BN> {
+  async hashToNumber(blockHash: Buffer): Promise<bigint> {
     const value = await this.get(DBTarget.HashToNumber, { blockHash })
-    return new BN(value)
+    return bufferToBigInt(value)
   }
 
   /**
    * Performs a block number to block hash lookup.
    */
-  async numberToHash(blockNumber: BN): Promise<Buffer> {
-    if (blockNumber.ltn(0)) {
-      throw new level.errors.NotFoundError()
+  async numberToHash(blockNumber: bigint): Promise<Buffer> {
+    if (blockNumber < BigInt(0)) {
+      throw new NotFoundError(blockNumber)
     }
 
     return this.get(DBTarget.NumberToHash, { blockNumber })
@@ -238,8 +188,11 @@ export class DBManager {
 
       let value = this._cache[cacheString].get(dbKey)
       if (!value) {
-        value = <Buffer>await this._db.get(dbKey, dbOpts)
-        this._cache[cacheString].set(dbKey, value)
+        value = await this._db.get(dbKey, dbOpts)
+
+        if (value) {
+          this._cache[cacheString].set(dbKey, value)
+        }
       }
 
       return value

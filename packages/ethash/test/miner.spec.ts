@@ -1,42 +1,48 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Block, BlockHeader } from '@ethereumjs/block'
 import Ethash from '../src'
-import { BN } from 'ethereumjs-util'
-import Common from '@ethereumjs/common'
-const level = require('level-mem')
+import Common, { Chain, Hardfork } from '@ethereumjs/common'
+import { MemoryLevel } from 'memory-level'
 
-const cacheDB = level()
+const cacheDB = new MemoryLevel()
+const common = new Common({ chain: Chain.Ropsten, hardfork: Hardfork.Petersburg })
 
 tape('Check if miner works as expected', async function (t) {
-  const e = new Ethash(cacheDB)
+  const e = new Ethash(cacheDB as any)
 
-  const block = Block.fromBlockData({
-    header: {
-      difficulty: new BN(100),
-      number: new BN(1),
+  const block = Block.fromBlockData(
+    {
+      header: {
+        difficulty: BigInt(100),
+        number: BigInt(1),
+      },
     },
-  })
+    { common }
+  )
 
   const invalidBlockResult = await e.verifyPOW(block)
   t.ok(!invalidBlockResult, 'should be invalid')
 
   const miner = e.getMiner(block.header)
-  t.ok((await miner.iterate(1)) === undefined, 'iterations can return undefined')
+  t.equals(await miner.iterate(1), undefined, 'iterations can return undefined')
 
-  t.ok((miner as any).currentNonce.eqn(1), 'miner saves current nonce')
+  t.equals((miner as any).currentNonce, BigInt(1), 'miner saves current nonce')
   await miner.iterate(1)
-  t.ok((miner as any).currentNonce.eqn(2), 'miner succesfully iterates over nonces')
+  t.equals((miner as any).currentNonce, BigInt(2), 'miner succesfully iterates over nonces')
 
   const solution = await miner.iterate(-1)
 
-  const validBlock = Block.fromBlockData({
-    header: {
-      difficulty: block.header.difficulty,
-      number: block.header.number,
-      nonce: solution?.nonce,
-      mixHash: solution?.mixHash,
+  const validBlock = Block.fromBlockData(
+    {
+      header: {
+        difficulty: block.header.difficulty,
+        number: block.header.number,
+        nonce: solution?.nonce,
+        mixHash: solution?.mixHash,
+      },
     },
-  })
+    { common }
+  )
 
   const validBlockResult = await e.verifyPOW(validBlock)
   t.ok(validBlockResult, 'succesfully mined block')
@@ -46,14 +52,17 @@ tape('Check if miner works as expected', async function (t) {
 })
 
 tape('Check if it is possible to mine Blocks and BlockHeaders', async function (t) {
-  const e = new Ethash(cacheDB)
+  const e = new Ethash(cacheDB as any)
 
-  const block = Block.fromBlockData({
-    header: {
-      difficulty: new BN(100),
-      number: new BN(1),
+  const block = Block.fromBlockData(
+    {
+      header: {
+        difficulty: BigInt(100),
+        number: BigInt(1),
+      },
     },
-  })
+    { common }
+  )
 
   const miner = e.getMiner(block.header)
   const solution = <BlockHeader>await miner.mine(-1)
@@ -69,14 +78,17 @@ tape('Check if it is possible to mine Blocks and BlockHeaders', async function (
 })
 
 tape('Check if it is possible to stop the miner', async function (t) {
-  const e = new Ethash(cacheDB)
+  const e = new Ethash(cacheDB as any)
 
-  const block = Block.fromBlockData({
-    header: {
-      difficulty: new BN(10000000000000),
-      number: new BN(1),
+  const block = Block.fromBlockData(
+    {
+      header: {
+        difficulty: BigInt(10000000000000),
+        number: BigInt(1),
+      },
     },
-  })
+    { common }
+  )
 
   const miner = e.getMiner(block.header)
   setTimeout(function () {
@@ -89,7 +101,7 @@ tape('Check if it is possible to stop the miner', async function (t) {
 })
 
 tape('Check if it is possible to stop the miner', async function (t) {
-  const e = new Ethash(cacheDB)
+  const e = new Ethash(cacheDB as any)
 
   const block: any = {}
 
@@ -101,15 +113,13 @@ tape('Check if it is possible to stop the miner', async function (t) {
 })
 
 tape('Should keep common when mining blocks or headers', async function (t) {
-  const e = new Ethash(cacheDB)
-
-  const common = new Common({ chain: 'ropsten', hardfork: 'petersburg' })
+  const e = new Ethash(cacheDB as any)
 
   const block = Block.fromBlockData(
     {
       header: {
-        difficulty: new BN(100),
-        number: new BN(1),
+        difficulty: BigInt(100),
+        number: BigInt(1),
       },
     },
     {
@@ -120,13 +130,13 @@ tape('Should keep common when mining blocks or headers', async function (t) {
   const miner = e.getMiner(block.header)
   const solution = <BlockHeader>await miner.mine(-1)
 
-  t.ok(solution._common.hardfork() === 'petersburg', 'hardfork did not change')
+  t.ok(solution._common.hardfork() === Hardfork.Petersburg, 'hardfork did not change')
   t.ok(solution._common.chainName() === 'ropsten', 'chain name did not change')
 
   const blockMiner = e.getMiner(block)
   const blockSolution = <Block>await blockMiner.mine(-1)
 
-  t.ok(blockSolution._common.hardfork() === 'petersburg', 'hardfork did not change')
+  t.ok(blockSolution._common.hardfork() === Hardfork.Petersburg, 'hardfork did not change')
   t.ok(blockSolution._common.chainName() === 'ropsten', 'chain name did not change')
 
   t.end()

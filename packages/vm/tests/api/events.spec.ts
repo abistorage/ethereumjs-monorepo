@@ -1,14 +1,15 @@
-import tape from 'tape'
-import { toBuffer, bufferToHex } from 'ethereumjs-util'
-import { Transaction } from '@ethereumjs/tx'
+import * as tape from 'tape'
+import { toBuffer, bufferToHex, Address, Account } from '@ethereumjs/util'
+import { FeeMarketEIP1559Transaction } from '@ethereumjs/tx'
 import { Block } from '@ethereumjs/block'
-import VM from '../../src/index'
+import { VM } from '../../src/vm'
+import EVM from '@ethereumjs/evm'
 
 tape('VM events', (t) => {
   const privKey = toBuffer('0xa5737ecdc1b89ca0091647e727ba082ed8953f29182e94adc397210dda643b07')
 
   t.test('should emit the Block before running it', async (st) => {
-    const vm = new VM()
+    const vm = await VM.create()
 
     let emitted
     vm.on('beforeBlock', (val: any) => {
@@ -29,7 +30,7 @@ tape('VM events', (t) => {
   })
 
   t.test('should emit a RunBlockResult after running a block', async (st) => {
-    const vm = new VM()
+    const vm = await VM.create()
 
     let emitted
     vm.on('afterBlock', (val: any) => {
@@ -51,16 +52,16 @@ tape('VM events', (t) => {
   })
 
   t.test('should emit the Transaction before running it', async (st) => {
-    const vm = new VM()
+    const vm = await VM.create()
 
     let emitted
     vm.on('beforeTx', (val: any) => {
       emitted = val
     })
 
-    const tx = Transaction.fromTxData({
-      gasPrice: 40000,
+    const tx = FeeMarketEIP1559Transaction.fromTxData({
       gasLimit: 90000,
+      maxFeePerGas: 40000,
       to: '0x1111111111111111111111111111111111111111',
     }).sign(privKey)
 
@@ -72,16 +73,17 @@ tape('VM events', (t) => {
   })
 
   t.test('should emit RunTxResult after running a tx', async (st) => {
-    const vm = new VM()
-
+    const vm = await VM.create()
+    const address = Address.fromPrivateKey(privKey)
+    await vm.stateManager.putAccount(address, new Account(BigInt(0), BigInt(0x11111111)))
     let emitted: any
     vm.on('afterTx', (val: any) => {
       emitted = val
     })
 
-    const tx = Transaction.fromTxData({
-      gasPrice: 40000,
+    const tx = FeeMarketEIP1559Transaction.fromTxData({
       gasLimit: 90000,
+      maxFeePerGas: 40000,
       to: '0x1111111111111111111111111111111111111111',
       value: 1,
     }).sign(privKey)
@@ -94,16 +96,17 @@ tape('VM events', (t) => {
   })
 
   t.test('should emit the Message before running it', async (st) => {
-    const vm = new VM()
-
+    const vm = await VM.create()
+    const address = Address.fromPrivateKey(privKey)
+    await vm.stateManager.putAccount(address, new Account(BigInt(0), BigInt(0x11111111)))
     let emitted: any
-    vm.on('beforeMessage', (val: any) => {
+    ;(<EVM>vm.evm).on('beforeMessage', (val: any) => {
       emitted = val
     })
 
-    const tx = Transaction.fromTxData({
-      gasPrice: 40000,
+    const tx = FeeMarketEIP1559Transaction.fromTxData({
       gasLimit: 90000,
+      maxFeePerGas: 40000,
       to: '0x1111111111111111111111111111111111111111',
       value: 1,
     }).sign(privKey)
@@ -117,16 +120,17 @@ tape('VM events', (t) => {
   })
 
   t.test('should emit EVMResult after running a message', async (st) => {
-    const vm = new VM()
-
+    const vm = await VM.create()
+    const address = Address.fromPrivateKey(privKey)
+    await vm.stateManager.putAccount(address, new Account(BigInt(0), BigInt(0x11111111)))
     let emitted: any
-    vm.on('afterMessage', (val: any) => {
+    ;(<EVM>vm.evm).on('afterMessage', (val: any) => {
       emitted = val
     })
 
-    const tx = Transaction.fromTxData({
-      gasPrice: 40000,
+    const tx = FeeMarketEIP1559Transaction.fromTxData({
       gasLimit: 90000,
+      maxFeePerGas: 40000,
       to: '0x1111111111111111111111111111111111111111',
       value: 1,
     }).sign(privKey)
@@ -139,19 +143,19 @@ tape('VM events', (t) => {
   })
 
   t.test('should emit InterpreterStep on each step', async (st) => {
-    const vm = new VM()
+    const vm = await VM.create()
 
     let lastEmitted: any
-    vm.on('step', (val: any) => {
+    ;(<EVM>vm.evm).on('step', (val: any) => {
       lastEmitted = val
     })
 
     // This is a deployment transaction that pushes 0x41 (i.e. ascii A) followed by 31 0s to
     // the stack, stores that in memory, and then returns the first byte from memory.
     // This deploys a contract which has a single byte of code, 0x41.
-    const tx = Transaction.fromTxData({
-      gasPrice: 40000,
+    const tx = FeeMarketEIP1559Transaction.fromTxData({
       gasLimit: 90000,
+      maxFeePerGas: 40000,
       data: '0x7f410000000000000000000000000000000000000000000000000000000000000060005260016000f3',
     }).sign(privKey)
 
@@ -163,19 +167,19 @@ tape('VM events', (t) => {
   })
 
   t.test('should emit a NewContractEvent on new contracts', async (st) => {
-    const vm = new VM()
+    const vm = await VM.create()
 
     let emitted: any
-    vm.on('newContract', (val: any) => {
+    ;(<EVM>vm.evm).on('newContract', (val: any) => {
       emitted = val
     })
 
     // This is a deployment transaction that pushes 0x41 (i.e. ascii A) followed by 31 0s to
     // the stack, stores that in memory, and then returns the first byte from memory.
     // This deploys a contract which has a single byte of code, 0x41.
-    const tx = Transaction.fromTxData({
-      gasPrice: 40000,
+    const tx = FeeMarketEIP1559Transaction.fromTxData({
       gasLimit: 90000,
+      maxFeePerGas: 40000,
       data: '0x7f410000000000000000000000000000000000000000000000000000000000000060005260016000f3',
     }).sign(privKey)
 

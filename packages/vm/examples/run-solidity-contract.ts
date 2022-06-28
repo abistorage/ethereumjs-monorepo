@@ -1,16 +1,20 @@
-import assert from 'assert'
 import { join } from 'path'
 import { readFileSync } from 'fs'
 import { defaultAbiCoder as AbiCoder, Interface } from '@ethersproject/abi'
-import { Address } from 'ethereumjs-util'
+import { Address } from '@ethereumjs/util'
+import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { Transaction } from '@ethereumjs/tx'
 import VM from '..'
 import { buildTransaction, encodeDeployment, encodeFunction } from './helpers/tx-builder'
 import { getAccountNonce, insertAccount } from './helpers/account-utils'
+import { Block } from '@ethereumjs/block'
 const solc = require('solc')
 
 const INITIAL_GREETING = 'Hello, World!'
 const SECOND_GREETING = 'Hola, Mundo!'
+
+const common = new Common({ chain: Chain.Rinkeby, hardfork: Hardfork.Istanbul })
+const block = Block.fromBlockData({ header: { extraData: Buffer.alloc(97) }},{ common })
 
 /**
  * This function creates the input for the Solidity compiler.
@@ -92,9 +96,9 @@ async function deployContract(
     nonce: await getAccountNonce(vm, senderPrivateKey),
   }
 
-  const tx = Transaction.fromTxData(buildTransaction(txData)).sign(senderPrivateKey)
+  const tx = Transaction.fromTxData(buildTransaction(txData), { common }).sign(senderPrivateKey)
 
-  const deploymentResult = await vm.runTx({ tx })
+  const deploymentResult = await vm.runTx({ tx, block })
 
   if (deploymentResult.execResult.exceptionError) {
     throw deploymentResult.execResult.exceptionError
@@ -120,9 +124,9 @@ async function setGreeting(
     nonce: await getAccountNonce(vm, senderPrivateKey),
   }
 
-  const tx = Transaction.fromTxData(buildTransaction(txData)).sign(senderPrivateKey)
+  const tx = Transaction.fromTxData(buildTransaction(txData), { common }).sign(senderPrivateKey)
 
-  const setGreetingResult = await vm.runTx({ tx })
+  const setGreetingResult = await vm.runTx({ tx, block })
 
   if (setGreetingResult.execResult.exceptionError) {
     throw setGreetingResult.execResult.exceptionError
@@ -132,11 +136,12 @@ async function setGreeting(
 async function getGreeting(vm: VM, contractAddress: Address, caller: Address) {
   const sigHash = new Interface(['function greet()']).getSighash('greet')
 
-  const greetResult = await vm.runCall({
+  const greetResult = await vm.evm.runCall({
     to: contractAddress,
     caller: caller,
     origin: caller, // The tx.origin is also the caller here
     data: Buffer.from(sigHash.slice(2), 'hex'),
+    block
   })
 
   if (greetResult.execResult.exceptionError) {
@@ -154,7 +159,7 @@ async function main() {
     'hex'
   )
 
-  const vm = new VM()
+  const vm = await VM.create({ common })
   const accountAddress = Address.fromPrivateKey(accountPk)
 
   console.log('Account: ', accountAddress.toString())
@@ -181,7 +186,10 @@ async function main() {
 
   console.log('Greeting:', greeting)
 
-  assert.equal(greeting, INITIAL_GREETING)
+  if (greeting !== INITIAL_GREETING)
+    throw new Error(
+      `initial greeting not equal, received ${greeting}, expected ${INITIAL_GREETING}`
+    )
 
   console.log('Changing greeting...')
 
@@ -191,7 +199,8 @@ async function main() {
 
   console.log('Greeting:', greeting2)
 
-  assert.equal(greeting2, SECOND_GREETING)
+  if (greeting2 !== SECOND_GREETING)
+    throw new Error(`second greeting not equal, received ${greeting2}, expected ${SECOND_GREETING}`)
 
   // Now let's look at what we created. The transaction
   // should have created a new account for the contract

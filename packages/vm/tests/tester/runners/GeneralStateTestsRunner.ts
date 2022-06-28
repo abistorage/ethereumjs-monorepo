@@ -1,8 +1,8 @@
-import tape from 'tape'
-import { SecureTrie as Trie } from 'merkle-patricia-tree'
-import { BN, toBuffer } from 'ethereumjs-util'
+import * as tape from 'tape'
+import { SecureTrie as Trie } from '@ethereumjs/trie'
+import { toBuffer } from '@ethereumjs/util'
 import { setupPreConditions, makeTx, makeBlockFromEnv } from '../../util'
-import type { InterpreterStep } from '../../../src/evm/interpreter'
+import { InterpreterStep } from '@ethereumjs/evm/dist//interpreter'
 
 function parseTestCases(
   forkConfigTestSuite: string,
@@ -69,9 +69,10 @@ async function runTestCase(options: any, testData: any, t: tape.Test) {
   const common = options.common
 
   const state = new Trie()
-  const vm = new VM({ state, common })
+  const vm = await VM.create({ state, common })
 
-  await setupPreConditions(vm.stateManager._trie, testData)
+  await setupPreConditions(vm.eei.state, testData)
+
   let execInfo = ''
   let tx
 
@@ -86,16 +87,16 @@ async function runTestCase(options: any, testData: any, t: tape.Test) {
       const block = makeBlockFromEnv(testData.env, { common })
 
       if (options.jsontrace) {
-        vm.on('step', function (e: InterpreterStep) {
+        vm.evm.on('step', function (e: InterpreterStep) {
           let hexStack = []
-          hexStack = e.stack.map((item: any) => {
-            return '0x' + new BN(item).toString(16, 0)
+          hexStack = e.stack.map((item: bigint) => {
+            return '0x' + item.toString(16)
           })
 
           const opTrace = {
             pc: e.pc,
             op: e.opcode.name,
-            gas: '0x' + e.gasLeft.toString('hex'),
+            gas: '0x' + e.gasLeft.toString(16),
             gasCost: '0x' + e.opcode.fee.toString(16),
             stack: hexStack,
             depth: e.depth,
@@ -159,6 +160,6 @@ export default async function runStateTest(options: any, testData: any, t: tape.
     }
   } catch (e: any) {
     console.log(e)
-    t.fail('error running test case for fork: ' + <string>options.forkConfigTestSuite)
+    t.fail(`error running test case for fork: ${options.forkConfigTestSuite}`)
   }
 }

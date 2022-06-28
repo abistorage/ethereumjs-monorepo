@@ -1,23 +1,22 @@
-import assert from 'assert'
-import { randomBytes } from 'crypto'
-import { privateKeyVerify, publicKeyConvert } from 'secp256k1'
-import createKeccakHash from 'keccak'
-import { rlp } from 'ethereumjs-util'
+import { arrToBufArr } from '@ethereumjs/util'
+import RLP from 'rlp'
+import { utils } from 'ethereum-cryptography/secp256k1'
+import { publicKeyConvert } from 'ethereum-cryptography/secp256k1-compat'
+import { keccak256 as _keccak256 } from 'ethereum-cryptography/keccak'
 import { ETH } from './protocol/eth'
 import { LES } from './protocol/les'
-
 import { debug as createDebugLogger } from 'debug'
 
 export const devp2pDebug = createDebugLogger('devp2p')
 
 export function keccak256(...buffers: Buffer[]) {
   const buffer = Buffer.concat(buffers)
-  return createKeccakHash('keccak256').update(buffer).digest()
+  return Buffer.from(_keccak256(buffer))
 }
 
 export function genPrivateKey(): Buffer {
-  const privateKey = randomBytes(32)
-  return privateKeyVerify(privateKey) ? privateKey : genPrivateKey()
+  const privateKey = utils.randomPrivateKey()
+  return utils.isValidPrivateKey(privateKey) ? Buffer.from(privateKey) : genPrivateKey()
 }
 
 export function pk2id(pk: Buffer): Buffer {
@@ -81,9 +80,7 @@ export function assertEq(
     } else {
       debug(debugMsg)
     }
-    throw new assert.AssertionError({
-      message: fullMsg,
-    })
+    throw new Error(fullMsg)
   }
 
   if (expected === actual) return
@@ -93,9 +90,7 @@ export function assertEq(
   } else {
     debug(fullMsg)
   }
-  throw new assert.AssertionError({
-    message: fullMsg,
-  })
+  throw new Error(fullMsg)
 }
 
 export function formatLogId(id: string, verbose: boolean): string {
@@ -135,7 +130,7 @@ export function createDeferred<T>(): Deferred<T> {
 export function unstrictDecode(value: Buffer) {
   // rlp library throws on remainder.length !== 0
   // this utility function bypasses that
-  return (rlp.decode(value, true) as any).data
+  return arrToBufArr(RLP.decode(Uint8Array.from(value), true).data)
 }
 
 // multiaddr 8.0.0 expects an Uint8Array with internal buffer starting at 0 offset

@@ -14,11 +14,6 @@ export * from './account'
 export * from './address'
 
 /**
- * Hash functions
- */
-export * from './hash'
-
-/**
  * ECDSA signature
  */
 export * from './signature'
@@ -27,16 +22,6 @@ export * from './signature'
  * Utilities for manipulating Buffers, byte arrays, etc.
  */
 export * from './bytes'
-
-/**
- * Function for definining properties on an object
- */
-export * from './object'
-
-/**
- * External exports (BN, rlp)
- */
-export * from './externals'
 
 /**
  * Helpful TypeScript types

@@ -1,7 +1,6 @@
-import { AddressLike, BNLike, BufferLike } from 'ethereumjs-util'
+import { AddressLike, BigIntLike, BufferLike } from '@ethereumjs/util'
 import Common from '@ethereumjs/common'
 import { TxData, JsonTx, AccessListEIP2930TxData, FeeMarketEIP1559TxData } from '@ethereumjs/tx'
-import { Block } from './block'
 import { BlockHeader } from './header'
 
 /**
@@ -19,7 +18,7 @@ export interface BlockOptions {
    * Default: {@link Common} object set to `mainnet` and the HF currently defined as the default
    * hardfork in the {@link Common} class.
    *
-   * Current default hardfork: `istanbul`
+   * Current default hardfork: `london`
    */
   common?: Common
   /**
@@ -38,19 +37,7 @@ export interface BlockOptions {
    * e.g. both Merge and Shanghai HF blocks set and the block number from the block provided
    * pointing to a Shanghai block: this will lead to set the HF as Shanghai and not the Merge).
    */
-  hardforkByTD?: BNLike
-  /**
-   * Turns the block header into the canonical genesis block header
-   *
-   * If set to `true` all other header data is ignored.
-   *
-   * If a {@link Common} instance is passed the instance need to be set to `chainstart` as a HF,
-   * otherwise usage of this option will throw
-   *
-   * Default: `false`
-   */
-  initWithGenesisHeader?: boolean
-
+  hardforkByTD?: BigIntLike
   /**
    * If a preceding {@link BlockHeader} (usually the parent header) is given the preceding
    * header will be used to calculate the difficulty for this block and the calculated
@@ -90,23 +77,15 @@ export interface HeaderData {
   transactionsTrie?: BufferLike
   receiptTrie?: BufferLike
   logsBloom?: BufferLike
-  difficulty?: BNLike
-  number?: BNLike
-  gasLimit?: BNLike
-  gasUsed?: BNLike
-  timestamp?: BNLike
+  difficulty?: BigIntLike
+  number?: BigIntLike
+  gasLimit?: BigIntLike
+  gasUsed?: BigIntLike
+  timestamp?: BigIntLike
   extraData?: BufferLike
   mixHash?: BufferLike
   nonce?: BufferLike
-  baseFeePerGas?: BNLike
-
-  /*
-   * Backwards compatible alias for {@link HeaderData.logsBloom}
-   * Will only be used if {@link HeaderData.logsBloom} is undefined
-   * (planned to be removed in next major release)
-   * @deprecated
-   */
-  bloom?: BufferLike
+  baseFeePerGas?: BigIntLike
 }
 
 /**
@@ -162,21 +141,4 @@ export interface JsonHeader {
   mixHash?: string
   nonce?: string
   baseFeePerGas?: string
-
-  /*
-   * Backwards compatible alias for {@link JsonHeader.baseFeePerGas}
-   * (planned to be removed in next major release)
-   * @deprecated
-   */
-  baseFee?: string
-  /*
-   * Backwards compatible alias for {@link JsonHeader.logsBloom}
-   * (planned to be removed in next major release)
-   * @deprecated
-   */
-  bloom?: BufferLike
-}
-
-export interface Blockchain {
-  getBlock(hash: Buffer): Promise<Block>
 }

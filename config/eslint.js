@@ -2,13 +2,12 @@ module.exports = {
   parser: '@typescript-eslint/parser',
   plugins: ['@typescript-eslint', 'implicit-dependencies', 'prettier'],
   env: {
-    es6: true,
+    es2020: true,
     node: true,
   },
   ignorePatterns: [
     'node_modules/',
     'dist/',
-    'dist.browser/',
     'coverage/',
     'prettier.config.js',
     'typedoc.js',
@@ -45,6 +44,7 @@ module.exports = {
     'prettier/prettier': 'error',
     'no-redeclare': 'off',
     '@typescript-eslint/no-redeclare': ['error'],
+    '@typescript-eslint/restrict-plus-operands': 'off',
   },
   parserOptions: {
     sourceType: 'module',

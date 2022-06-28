@@ -1,9 +1,9 @@
-import tape from 'tape'
-import { Address, BN, bufferToHex } from 'ethereumjs-util'
+import * as tape from 'tape'
+import { Address, bufferToHex } from '@ethereumjs/util'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
-import VM from '../../../src'
+import { VM } from '../../../src/vm'
 import { isRunningInKarma } from '../../util'
-import { getActivePrecompiles } from '../../../src/evm/precompiles'
+import { getActivePrecompiles } from '@ethereumjs/evm'
 
 const precompileAddressStart = 0x0a
 const precompileAddressEnd = 0x12
@@ -21,19 +21,19 @@ tape('EIP-2537 BLS tests', (t) => {
       return st.end()
     }
     const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.MuirGlacier })
-    const vm = new VM({ common: common })
+    const vm = await VM.create({ common: common })
 
     for (const address of precompiles) {
       const to = new Address(Buffer.from(address, 'hex'))
-      const result = await vm.runCall({
+      const result = await vm.evm.runCall({
         caller: Address.zero(),
-        gasLimit: new BN(0xffffffffff),
+        gasLimit: BigInt(0xffffffffff),
         to,
-        value: new BN(0),
+        value: BigInt(0),
         data: Buffer.alloc(0),
       })
 
-      if (!result.execResult.gasUsed.eq(new BN(0))) {
+      if (result.execResult.executionGasUsed !== BigInt(0)) {
         st.fail('BLS precompiles should not use any gas if EIP not activated')
       }
 
@@ -52,19 +52,19 @@ tape('EIP-2537 BLS tests', (t) => {
       return st.end()
     }
     const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Byzantium, eips: [2537] })
-    const vm = new VM({ common: common })
+    const vm = await VM.create({ common: common })
 
     for (const address of precompiles) {
       const to = new Address(Buffer.from(address, 'hex'))
-      const result = await vm.runCall({
+      const result = await vm.evm.runCall({
         caller: Address.zero(),
-        gasLimit: new BN(0xffffffffff),
+        gasLimit: BigInt(0xffffffffff),
         to,
-        value: new BN(0),
+        value: BigInt(0),
         data: Buffer.alloc(0),
       })
 
-      if (!result.execResult.gasUsed.eq(new BN(0xffffffffff))) {
+      if (result.execResult.executionGasUsed !== BigInt(0xffffffffff)) {
         st.fail('BLS precompiles should use all gas on empty inputs')
       }
 
@@ -90,7 +90,7 @@ tape('EIP-2537 BLS tests', (t) => {
       return st.end()
     }
     const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Berlin, eips: [2537] })
-    const vm = new VM({ common: common })
+    const vm = await VM.create({ common: common })
     const BLS12G2MultiExp = getActivePrecompiles(common).get(
       '000000000000000000000000000000000000000f'
     )!
@@ -102,9 +102,9 @@ tape('EIP-2537 BLS tests', (t) => {
 
     const result = await BLS12G2MultiExp({
       data: Buffer.from(testVector, 'hex'),
-      gasLimit: new BN(5000000),
+      gasLimit: BigInt(5000000),
       _common: common,
-      _VM: vm,
+      _EVM: <any>vm.evm,
     })
 
     st.deepEqual(

@@ -6,17 +6,16 @@ import {
 } from '@ethereumjs/blockchain/dist/db/helpers'
 import { ConsensusType, Hardfork } from '@ethereumjs/common'
 import VM from '@ethereumjs/vm'
-import { bufferToHex } from 'ethereumjs-util'
-import { DefaultStateManager } from '@ethereumjs/vm/dist/state'
-import { SecureTrie as Trie } from 'merkle-patricia-tree'
+import { bufferToHex } from '@ethereumjs/util'
+import { DefaultStateManager } from '@ethereumjs/statemanager'
+import { LevelDB, SecureTrie as Trie } from '@ethereumjs/trie'
 import { short } from '../util'
 import { debugCodeReplayBlock } from '../util/debug'
 import { Event } from '../types'
 import { Execution, ExecutionOptions } from './execution'
 import { ReceiptsManager } from './receipt'
 import type { Block } from '@ethereumjs/block'
-import type { RunBlockOpts } from '@ethereumjs/vm/dist/runBlock'
-import type { TxReceipt } from '@ethereumjs/vm/dist/types'
+import type { RunBlockOpts, TxReceipt } from '@ethereumjs/vm'
 
 export class VMExecution extends Execution {
   public vm: VM
@@ -24,7 +23,7 @@ export class VMExecution extends Execution {
 
   public receiptsManager?: ReceiptsManager
   private pendingReceipts?: Map<string, TxReceipt[]>
-  private vmPromise?: Promise<number | undefined>
+  private vmPromise?: Promise<number>
 
   /** Number of maximum blocks to run per iteration of {@link VMExecution.run} */
   private NUM_BLOCKS_PER_ITERATION = 50
@@ -36,14 +35,14 @@ export class VMExecution extends Execution {
     super(options)
 
     if (!this.config.vm) {
-      const trie = new Trie(this.stateDB)
+      const trie = new Trie({ db: new LevelDB(this.stateDB) })
 
       const stateManager = new DefaultStateManager({
         common: this.config.execCommon,
         trie,
       })
 
-      this.vm = new VM({
+      this.vm = new (VM as any)({
         common: this.config.execCommon,
         blockchain: this.chain.blockchain,
         stateManager,
@@ -67,14 +66,15 @@ export class VMExecution extends Execution {
    * Initializes VM execution. Must be called before run() is called
    */
   async open(): Promise<void> {
+    await this.vm.init()
     const headBlock = await this.vm.blockchain.getIteratorHead()
     const { number } = headBlock.header
     const td = await this.vm.blockchain.getTotalDifficulty(headBlock.header.hash())
     this.config.execCommon.setHardforkByBlockNumber(number, td)
     this.hardfork = this.config.execCommon.hardfork()
     this.config.logger.info(`Initializing VM execution hardfork=${this.hardfork}`)
-    if (number.isZero()) {
-      await this.vm.stateManager.generateCanonicalGenesis()
+    if (number === BigInt(0)) {
+      await this.vm.eei.state.generateCanonicalGenesis(this.vm.blockchain.genesisState())
     }
   }
 
@@ -98,9 +98,10 @@ export class VMExecution extends Execution {
     }
     // Bypass updating head by using blockchain db directly
     const [hash, num] = [block.hash(), block.header.number]
-    const td = (await this.chain.getTd(block.header.parentHash, block.header.number.subn(1))).add(
+    const td =
+      (await this.chain.getTd(block.header.parentHash, block.header.number - BigInt(1))) +
       block.header.difficulty
-    )
+
     await this.chain.blockchain.dbManager.batch([
       DBSetTD(td, num, hash),
       ...DBSetBlockOrHeader(block),
@@ -138,7 +139,7 @@ export class VMExecution extends Execution {
 
     const { blockchain } = this.vm
     let startHeadBlock = await blockchain.getIteratorHead()
-    let canonicalHead = await blockchain.getLatestBlock()
+    let canonicalHead = await blockchain.getCanonicalHeadBlock()
 
     let headBlock: Block | undefined
     let parentState: Buffer | undefined
@@ -152,7 +153,6 @@ export class VMExecution extends Execution {
       headBlock = undefined
       parentState = undefined
       errorBlock = undefined
-
       this.vmPromise = blockchain.iterator(
         'vm',
         async (block: Block, reorg: boolean) => {
@@ -240,7 +240,7 @@ export class VMExecution extends Execution {
         },
         this.NUM_BLOCKS_PER_ITERATION
       )
-      numExecuted = (await this.vmPromise) as number
+      numExecuted = await this.vmPromise
 
       if (errorBlock) {
         await this.chain.blockchain.setIteratorHead('vm', (errorBlock as Block).header.parentHash)
@@ -248,10 +248,10 @@ export class VMExecution extends Execution {
       }
 
       const endHeadBlock = await this.vm.blockchain.getIteratorHead('vm')
-      if (numExecuted > 0) {
-        const firstNumber = startHeadBlock.header.number.toNumber()
+      if (numExecuted && numExecuted > 0) {
+        const firstNumber = startHeadBlock.header.number
         const firstHash = short(startHeadBlock.hash())
-        const lastNumber = endHeadBlock.header.number.toNumber()
+        const lastNumber = endHeadBlock.header.number
         const lastHash = short(endHeadBlock.hash())
         const baseFeeAdd = this.config.execCommon.gteHardfork(Hardfork.London)
           ? `baseFee=${endHeadBlock.header.baseFeePerGas} `
@@ -270,7 +270,7 @@ export class VMExecution extends Execution {
         )
       }
       startHeadBlock = endHeadBlock
-      canonicalHead = await this.vm.blockchain.getLatestBlock()
+      canonicalHead = await this.vm.blockchain.getCanonicalHeadBlock()
     }
     this.running = false
     return numExecuted ?? 0
@@ -300,7 +300,7 @@ export class VMExecution extends Execution {
    */
   async executeBlocks(first: number, last: number, txHashes: string[]) {
     this.config.logger.info('Preparing for block execution (debug mode, no services started)...')
-    const vm = this.vm.copy()
+    const vm = await this.vm.copy()
 
     for (let blockNumber = first; blockNumber <= last; blockNumber++) {
       const block = await vm.blockchain.getBlock(blockNumber)
@@ -329,7 +329,7 @@ export class VMExecution extends Execution {
           if (allTxs || txHashes.includes(txHash)) {
             const res = await vm.runTx({ block, tx })
             this.config.logger.info(
-              `Executed tx hash=${txHash} gasUsed=${res.gasUsed} from block num=${blockNumber}`
+              `Executed tx hash=${txHash} gasUsed=${res.totalGasSpent} from block num=${blockNumber}`
             )
             count += 1
           }

@@ -1,6 +1,7 @@
-import tape from 'tape'
-import { KECCAK256_NULL, rlp } from 'ethereumjs-util'
-import { BaseTrie, CheckpointTrie } from '../src'
+import * as tape from 'tape'
+import { bufArrToArr, KECCAK256_NULL } from '@ethereumjs/util'
+import RLP from 'rlp'
+import { CheckpointTrie, LevelDB, Trie } from '../src'
 
 // explicitly import buffer,
 // needed for karma-typescript bundling
@@ -14,13 +15,13 @@ tape('simple save and retrieve', function (tester) {
       '3f4399b08efe68945c1cf90ffe85bbe3ce978959da753f9e649f034015b8817d',
       'hex'
     )
-    const trie = new CheckpointTrie(null, root)
+    const trie = new CheckpointTrie({ db: new LevelDB(), root })
     const value = await trie.get(Buffer.from('test'))
     t.equal(value, null)
     t.end()
   })
 
-  const trie = new CheckpointTrie()
+  const trie = new CheckpointTrie({ db: new LevelDB() })
 
   it('save a value', async function (t) {
     await trie.put(Buffer.from('test'), Buffer.from('one'))
@@ -82,7 +83,7 @@ tape('simple save and retrieve', function (tester) {
 
   tape('storing longer values', async function (tester) {
     const it = tester.test
-    const trie = new CheckpointTrie()
+    const trie = new CheckpointTrie({ db: new LevelDB() })
     const longString = 'this will be a really really really long value'
     const longStringRoot = 'b173e2db29e79c78963cff5196f8a983fbe0171388972106b114ef7f5c24dfa3'
 
@@ -107,7 +108,7 @@ tape('simple save and retrieve', function (tester) {
 
   tape('testing extensions and branches', function (tester) {
     const it = tester.test
-    const trie = new CheckpointTrie()
+    const trie = new CheckpointTrie({ db: new LevelDB() })
 
     it('should store a value', async function (t) {
       await trie.put(Buffer.from('doge'), Buffer.from('coin'))
@@ -135,7 +136,7 @@ tape('simple save and retrieve', function (tester) {
 
   tape('testing extensions and branches - reverse', function (tester) {
     const it = tester.test
-    const trie = new CheckpointTrie()
+    const trie = new CheckpointTrie({ db: new LevelDB() })
 
     it('should create extension to store this value', async function (t) {
       await trie.put(Buffer.from('do'), Buffer.from('verb'))
@@ -161,11 +162,11 @@ tape('simple save and retrieve', function (tester) {
 tape('testing deletion cases', function (tester) {
   const it = tester.test
   const trieSetupWithoutDBDelete = {
-    trie: new CheckpointTrie(),
+    trie: new CheckpointTrie({ db: new LevelDB() }),
     msg: 'without DB delete',
   }
   const trieSetupWithDBDelete = {
-    trie: new CheckpointTrie(undefined, undefined, true),
+    trie: new CheckpointTrie({ db: new LevelDB(), deleteFromDB: true }),
     msg: 'with DB delete',
   }
   const trieSetups = [trieSetupWithoutDBDelete, trieSetupWithDBDelete]
@@ -228,16 +229,16 @@ tape('testing deletion cases', function (tester) {
 })
 
 tape('shall handle the case of node not found correctly', async (t) => {
-  const trie = new BaseTrie()
+  const trie = new Trie({ db: new LevelDB() })
   await trie.put(Buffer.from('a'), Buffer.from('value1'))
   await trie.put(Buffer.from('aa'), Buffer.from('value2'))
   await trie.put(Buffer.from('aaa'), Buffer.from('value3'))
 
-  /* Setups a trie which consists of 
-    ExtensionNode -> 
+  /* Setups a trie which consists of
+    ExtensionNode ->
     BranchNode -> value1
-    ExtensionNode -> 
-    BranchNode -> value2 
+    ExtensionNode ->
+    BranchNode -> value2
     LeafNode -> value3
   */
 
@@ -261,7 +262,7 @@ tape('shall handle the case of node not found correctly', async (t) => {
 
 tape('it should create the genesis state root from ethereum', function (tester) {
   const it = tester.test
-  const trie4 = new CheckpointTrie()
+  const trie4 = new CheckpointTrie({ db: new LevelDB() })
 
   const g = Buffer.from('8a40bfaa73256b60764c1bf40675a99083efb075', 'hex')
   const j = Buffer.from('e6716f9544a56c530d868e4bfbacb172315bdead', 'hex')
@@ -276,7 +277,7 @@ tape('it should create the genesis state root from ethereum', function (tester) 
   startAmount[0] = 1
 
   const account = [startAmount, 0, stateRoot, KECCAK256_NULL]
-  const rlpAccount = rlp.encode(account)
+  const rlpAccount = Buffer.from(RLP.encode(bufArrToArr(account as Buffer[])))
   const cppRlp =
     'f85e9a010000000000000000000000000000000000000000000000000080a00000000000000000000000000000000000000000000000000000000000000000a0c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470'
 
@@ -311,12 +312,12 @@ tape('setting back state root (deleteFromDB)', async (t) => {
 
   const trieSetups = [
     {
-      trie: new BaseTrie(undefined, undefined, false),
+      trie: new Trie({ db: new LevelDB(), deleteFromDB: false }),
       expected: v1,
       msg: 'should return v1 when setting back the state root when deleteFromDB=false',
     },
     {
-      trie: new BaseTrie(undefined, undefined, true),
+      trie: new Trie({ db: new LevelDB(), deleteFromDB: true }),
       expected: null,
       msg: 'should return null when setting back the state root when deleteFromDB=true',
     },

@@ -1,10 +1,10 @@
-import tape from 'tape'
-import { Address, BN } from 'ethereumjs-util'
-import VM from '../../../src'
+import * as tape from 'tape'
+import { Address } from '@ethereumjs/util'
+import { VM } from '../../../src/vm'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
-import { InterpreterStep } from '../../../src/evm/interpreter'
-import { EIP2929StateManager } from '../../../src/state/interface'
 import { Transaction } from '@ethereumjs/tx'
+import EVM from '@ethereumjs/evm'
+import { InterpreterStep } from '@ethereumjs/evm/dist/interpreter'
 
 const address = new Address(Buffer.from('11'.repeat(20), 'hex'))
 const pkey = Buffer.from('20'.repeat(32), 'hex')
@@ -112,19 +112,18 @@ tape('EIP-3529 tests', (t) => {
   const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Berlin, eips: [3529] })
 
   t.test('should verify EIP test cases', async (st) => {
-    const vm = new VM({ common })
+    const vm = await VM.create({ common })
 
-    let gasRefund: BN
-    let gasLeft: BN
-
-    vm.on('step', (step: InterpreterStep) => {
+    let gasRefund: bigint
+    let gasLeft: bigint
+    ;(<EVM>vm.evm).on('step', (step: InterpreterStep) => {
       if (step.opcode.name === 'STOP') {
-        gasRefund = step.gasRefund.clone()
-        gasLeft = step.gasLeft.clone()
+        gasRefund = step.gasRefund
+        gasLeft = step.gasLeft
       }
     })
 
-    const gasLimit = new BN(100000)
+    const gasLimit = BigInt(100000)
     const key = Buffer.from('00'.repeat(32), 'hex')
 
     for (const testCase of testCases) {
@@ -137,29 +136,28 @@ tape('EIP-3529 tests', (t) => {
       )
 
       await vm.stateManager.getContractStorage(address, key)
-      ;(<EIP2929StateManager>vm.stateManager).addWarmedStorage(address.toBuffer(), key)
+      vm.eei.state.addWarmedStorage(address.toBuffer(), key)
 
-      await vm.runCode({
+      await vm.evm.runCode!({
         code,
         address,
         gasLimit,
       })
 
-      const gasUsed = gasLimit.sub(gasLeft!)
-      const effectiveGas = gasUsed.sub(gasRefund!)
-
-      st.equals(effectiveGas.toNumber(), testCase.effectiveGas, 'correct effective gas')
-      st.equals(gasUsed.toNumber(), testCase.usedGas, 'correct used gas')
+      const gasUsed = gasLimit - gasLeft!
+      const effectiveGas = gasUsed - gasRefund!
+      st.equal(effectiveGas, BigInt(testCase.effectiveGas), 'correct effective gas')
+      st.equal(gasUsed, BigInt(testCase.usedGas), 'correct used gas')
 
       // clear the storage cache, otherwise next test will use current original value
-      vm.stateManager.clearOriginalStorageCache()
+      vm.eei.state.clearOriginalStorageCache()
     }
 
     st.end()
   })
 
   t.test('should not refund selfdestructs', async (st) => {
-    const vm = new VM({ common })
+    const vm = await VM.create({ common })
 
     const tx = Transaction.fromTxData({
       data: '0x6000ff',
@@ -170,9 +168,8 @@ tape('EIP-3529 tests', (t) => {
       tx,
     })
 
-    st.ok(result.execResult.exceptionError === undefined, 'transaction executed succesfully')
-    st.ok(BN.isBN(result.execResult.gasRefund), 'gas refund is defined')
-    st.ok(result.execResult.gasRefund?.isZero(), 'gas refund is zero')
+    st.equal(result.execResult.exceptionError, undefined, 'transaction executed successfully')
+    st.equal(result.gasRefund, BigInt(0), 'gas refund is zero')
     st.end()
   })
 
@@ -182,17 +179,16 @@ tape('EIP-3529 tests', (t) => {
      * Then, it resets all these 100 slots back to 0. This is to check if the
      * max gas refund is respected.
      */
-    const vm = new VM({ common })
+    const vm = await VM.create({ common })
 
-    let startGas: any
-    let finalGas: any
-
-    vm.on('step', (step: InterpreterStep) => {
+    let startGas: bigint
+    let finalGas: bigint
+    ;(<EVM>vm.evm).on('step', (step: InterpreterStep) => {
       if (startGas === undefined) {
-        startGas = step.gasLeft.clone()
+        startGas = step.gasLeft
       }
       if (step.opcode.name === 'STOP') {
-        finalGas = step.gasLeft.clone()
+        finalGas = step.gasLeft
       }
     })
 
@@ -221,13 +217,11 @@ tape('EIP-3529 tests', (t) => {
 
     const result = await vm.runTx({ tx })
 
-    const actualGasUsed = startGas.sub(finalGas).addn(21000)
-    const maxRefund = actualGasUsed.divn(5)
-    const minGasUsed = actualGasUsed.sub(maxRefund)
-    const gasUsed = result.execResult.gasUsed
-
-    st.ok(result.execResult.gasRefund?.gt(maxRefund), 'refund is larger than the max refund')
-    st.ok(gasUsed.gte(minGasUsed), 'gas used respects the max refund quotient')
+    const actualGasUsed = startGas! - finalGas! + BigInt(21000)
+    const maxRefund = actualGasUsed / BigInt(5)
+    const minGasUsed = actualGasUsed - maxRefund
+    st.ok(result.gasRefund! > maxRefund, 'refund is larger than the max refund')
+    st.ok(result.totalGasSpent >= minGasUsed, 'gas used respects the max refund quotient')
     st.end()
   })
 })

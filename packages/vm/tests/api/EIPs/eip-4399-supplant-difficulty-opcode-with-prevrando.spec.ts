@@ -1,20 +1,21 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Block } from '@ethereumjs/block'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
-import { BN } from 'ethereumjs-util'
-import VM from '../../../src'
-import type { InterpreterStep } from '../../../src/evm/interpreter'
+import { VM } from '../../../src/vm'
+import { bufferToBigInt } from '@ethereumjs/util'
+import EVM from '@ethereumjs/evm'
+import { InterpreterStep } from '@ethereumjs/evm/dist/interpreter'
 
 tape('EIP-4399 -> 0x44 (DIFFICULTY) should return PREVRANDAO', (t) => {
   t.test('should return the right values', async (st) => {
     const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.London })
-    const vm = new VM({ common })
+    const vm = await VM.create({ common })
 
-    const genesis = await vm.blockchain.getLatestBlock()
+    const genesis = await vm.blockchain.getCanonicalHeadBlock()
     const header = {
       number: 1,
       parentHash: genesis.header.hash(),
-      timestamp: genesis.header.timestamp.addn(1),
+      timestamp: genesis.header.timestamp + BigInt(1),
       gasLimit: genesis.header.gasLimit,
     }
     let block = Block.fromBlockData(
@@ -24,7 +25,7 @@ tape('EIP-4399 -> 0x44 (DIFFICULTY) should return PREVRANDAO', (t) => {
 
     // Track stack
     let stack: any = []
-    vm.on('step', (istep: InterpreterStep) => {
+    ;(<EVM>vm.evm).on('step', (istep: InterpreterStep) => {
       if (istep.opcode.name === 'STOP') {
         stack = istep.stack
       }
@@ -32,13 +33,13 @@ tape('EIP-4399 -> 0x44 (DIFFICULTY) should return PREVRANDAO', (t) => {
 
     const runCodeArgs = {
       code: Buffer.from('4400', 'hex'),
-      gasLimit: new BN(0xffff),
+      gasLimit: BigInt(0xffff),
     }
-    await vm.runCode({ ...runCodeArgs, block })
-    st.ok(stack[0].eq(block.header.difficulty), '0x44 returns DIFFICULTY (London)')
+    await vm.evm.runCode!({ ...runCodeArgs, block })
+    st.equal(stack[0], block.header.difficulty, '0x44 returns DIFFICULTY (London)')
 
     common.setHardfork(Hardfork.Merge)
-    const prevRandao = Buffer.alloc(32, 1)
+    const prevRandao = bufferToBigInt(Buffer.alloc(32, 1))
     block = Block.fromBlockData(
       {
         header: {
@@ -48,8 +49,8 @@ tape('EIP-4399 -> 0x44 (DIFFICULTY) should return PREVRANDAO', (t) => {
       },
       { common }
     )
-    await vm.runCode({ ...runCodeArgs, block })
-    st.ok(stack[0].eq(new BN(prevRandao)), '0x44 returns PREVRANDAO (Merge)')
+    await vm.evm.runCode!({ ...runCodeArgs, block })
+    st.equal(stack[0], prevRandao, '0x44 returns PREVRANDAO (Merge)')
 
     st.end()
   })

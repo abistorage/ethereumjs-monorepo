@@ -1,7 +1,7 @@
 import { Block } from '@ethereumjs/block'
-import { Transaction } from '@ethereumjs/tx'
-import { BN, toBuffer } from 'ethereumjs-util'
+import { toBuffer } from '@ethereumjs/util'
 import { dummy } from './helpers'
+import { Transaction } from '@ethereumjs/tx'
 
 export function mockBlockchain(options: any = {}) {
   const number = options.number ?? '0x444444'
@@ -11,7 +11,7 @@ export function mockBlockchain(options: any = {}) {
   const block = {
     hash: () => toBuffer(blockHash),
     header: {
-      number: new BN(toBuffer(number)),
+      number: BigInt(number),
     },
     toJSON: () => ({
       ...Block.fromBlockData({ header: { number } }).toJSON(),
@@ -29,8 +29,9 @@ export function mockBlockchain(options: any = {}) {
       }
       return block
     },
-    getLatestHeader: () => {
+    getCanonicalHeadHeader: () => {
       return Block.fromBlockData().header
     },
+    genesisBlock: block,
   }
 }

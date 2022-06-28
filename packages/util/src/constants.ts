@@ -1,25 +1,31 @@
 import { Buffer } from 'buffer'
-import { BN } from './externals'
+import { CURVE } from 'ethereum-cryptography/secp256k1'
 
 /**
  * 2^64-1
  */
-export const MAX_UINT64 = new BN('ffffffffffffffff', 16)
+export const MAX_UINT64 = BigInt('0xffffffffffffffff')
 
 /**
  * The max integer that the evm can handle (2^256-1)
  */
-export const MAX_INTEGER = new BN(
-  'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
-  16
+export const MAX_INTEGER = BigInt(
+  '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
 )
+
+/**
+ * The max integer that the evm can handle (2^256-1) as a bigint
+ */
+export const MAX_INTEGER_BIGINT = BigInt(2) ** BigInt(256) - BigInt(1)
+
+export const SECP256K1_ORDER = CURVE.n
+export const SECP256K1_ORDER_DIV_2 = CURVE.n / BigInt(2)
 
 /**
  * 2^256
  */
-export const TWO_POW256 = new BN(
-  '10000000000000000000000000000000000000000000000000000000000000000',
-  16
+export const TWO_POW256 = BigInt(
+  '0x10000000000000000000000000000000000000000000000000000000000000000'
 )
 
 /**

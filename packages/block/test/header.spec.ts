@@ -1,11 +1,9 @@
-import tape from 'tape'
-import { Address, BN, zeros, KECCAK256_RLP, KECCAK256_RLP_ARRAY, rlp } from 'ethereumjs-util'
-import Common, { Chain, Hardfork } from '@ethereumjs/common'
+import * as tape from 'tape'
+import { Address, toBuffer, zeros, KECCAK256_RLP, KECCAK256_RLP_ARRAY } from '@ethereumjs/util'
+import RLP from 'rlp'
+import Common, { Chain, CliqueConfig, Hardfork } from '@ethereumjs/common'
 import { BlockHeader } from '../src/header'
 import { Block } from '../src'
-import { Mockchain } from './mockchain'
-import { PoaMockchain } from './poaMockchain'
-const testData = require('./testdata/testdata.json')
 const blocksMainnet = require('./testdata/blocks_mainnet.json')
 const blocksGoerli = require('./testdata/blocks_goerli.json')
 
@@ -19,11 +17,11 @@ tape('[Block]: Header functions', function (t) {
       st.ok(header.transactionsTrie.equals(KECCAK256_RLP))
       st.ok(header.receiptTrie.equals(KECCAK256_RLP))
       st.ok(header.logsBloom.equals(zeros(256)))
-      st.ok(header.difficulty.isZero())
-      st.ok(header.number.isZero())
-      st.ok(header.gasLimit.eq(new BN(Buffer.from('ffffffffffffff', 'hex'))))
-      st.ok(header.gasUsed.isZero())
-      st.ok(header.timestamp.isZero())
+      st.equal(header.difficulty, BigInt(0))
+      st.equal(header.number, BigInt(0))
+      st.equal(header.gasLimit, BigInt('0xffffffffffffff'))
+      st.equal(header.gasUsed, BigInt(0))
+      st.equal(header.timestamp, BigInt(0))
       st.ok(header.extraData.equals(Buffer.from([])))
       st.ok(header.mixHash.equals(zeros(32)))
       st.ok(header.nonce.equals(zeros(8)))
@@ -40,7 +38,7 @@ tape('[Block]: Header functions', function (t) {
 
   t.test('Initialization -> fromHeaderData()', function (st) {
     const common = new Common({ chain: Chain.Ropsten, hardfork: Hardfork.Chainstart })
-    let header = BlockHeader.genesis(undefined, { common })
+    let header = BlockHeader.fromHeaderData(undefined, { common })
     st.ok(header.hash().toString('hex'), 'genesis block should initialize')
     st.equal(header._common.hardfork(), 'chainstart', 'should initialize with correct HF provided')
 
@@ -79,7 +77,7 @@ tape('[Block]: Header functions', function (t) {
 
   t.test('Initialization -> fromRLPSerializedHeader() -> error cases', function (st) {
     try {
-      BlockHeader.fromRLPSerializedHeader(rlp.encode('a'))
+      BlockHeader.fromRLPSerializedHeader(Buffer.from(RLP.encode('a')))
     } catch (e: any) {
       const expectedError = 'Invalid serialized header input. Must be array'
       st.ok(e.message.includes(expectedError), 'should throw with header as rlp encoded string')
@@ -141,10 +139,7 @@ tape('[Block]: Header functions', function (t) {
 
   t.test('Initialization -> Clique Blocks', function (st) {
     const common = new Common({ chain: Chain.Rinkeby, hardfork: Hardfork.Chainstart })
-    let header = BlockHeader.genesis(undefined, { common })
-    st.ok(header.hash().toString('hex'), 'genesis block should initialize')
-
-    header = BlockHeader.fromHeaderData({}, { common })
+    const header = BlockHeader.fromHeaderData({ extraData: Buffer.alloc(97) }, { common })
     st.ok(header.hash().toString('hex'), 'default block should initialize')
 
     st.end()
@@ -152,10 +147,8 @@ tape('[Block]: Header functions', function (t) {
 
   t.test('should validate extraData', async function (st) {
     // PoW
-    let blockchain = new Mockchain()
     let common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Chainstart })
-    let genesis = Block.genesis({}, { common })
-    await blockchain.putBlock(genesis)
+    let genesis = Block.fromBlockData({}, { common })
 
     const number = 1
     let parentHash = genesis.hash()
@@ -167,9 +160,9 @@ tape('[Block]: Header functions', function (t) {
     // valid extraData: at limit
     let testCase = 'pow block should validate with 32 bytes of extraData'
     let extraData = Buffer.alloc(32)
-    let header = BlockHeader.fromHeaderData({ ...data, extraData }, opts)
+
     try {
-      await header.validate(blockchain)
+      BlockHeader.fromHeaderData({ ...data, extraData }, opts)
       st.pass(testCase)
     } catch (error: any) {
       st.fail(testCase)
@@ -178,9 +171,9 @@ tape('[Block]: Header functions', function (t) {
     // valid extraData: fewer than limit
     testCase = 'pow block should validate with 12 bytes of extraData'
     extraData = Buffer.alloc(12)
-    header = BlockHeader.fromHeaderData({ ...data, extraData }, opts)
+
     try {
-      await header.validate(blockchain)
+      BlockHeader.fromHeaderData({ ...data, extraData }, opts)
       st.ok(testCase)
     } catch (error: any) {
       st.fail(testCase)
@@ -189,32 +182,29 @@ tape('[Block]: Header functions', function (t) {
     // extraData beyond limit
     testCase = 'pow block should throw with excess amount of extraData'
     extraData = Buffer.alloc(42)
-    header = BlockHeader.fromHeaderData({ ...data, extraData }, opts)
+
     try {
-      await header.validate(blockchain)
+      BlockHeader.fromHeaderData({ ...data, extraData }, opts)
       st.fail(testCase)
     } catch (error: any) {
       st.ok(error.message.includes('invalid amount of extra data'), testCase)
     }
 
     // PoA
-    blockchain = new Mockchain()
     common = new Common({ chain: Chain.Rinkeby, hardfork: Hardfork.Chainstart })
-    genesis = Block.genesis({}, { common })
-    await blockchain.putBlock(genesis)
+    genesis = Block.fromBlockData({ header: { extraData: Buffer.alloc(97) } }, { common })
 
     parentHash = genesis.hash()
     gasLimit = genesis.header.gasLimit
-    data = { number, parentHash, timestamp, gasLimit, difficulty: new BN(1) } as any
+    data = { number, parentHash, timestamp, gasLimit, difficulty: BigInt(1) } as any
     opts = { common } as any
 
     // valid extraData (32 byte vanity + 65 byte seal)
     testCase =
       'clique block should validate with valid number of bytes in extraData: 32 byte vanity + 65 byte seal'
     extraData = Buffer.concat([Buffer.alloc(32), Buffer.alloc(65)])
-    header = BlockHeader.fromHeaderData({ ...data, extraData }, opts)
     try {
-      await header.validate(blockchain)
+      BlockHeader.fromHeaderData({ ...data, extraData }, opts)
       t.pass(testCase)
     } catch (error: any) {
       t.fail(testCase)
@@ -223,9 +213,8 @@ tape('[Block]: Header functions', function (t) {
     // invalid extraData length
     testCase = 'clique block should throw on invalid extraData length'
     extraData = Buffer.alloc(32)
-    header = BlockHeader.fromHeaderData({ ...data, extraData }, opts)
     try {
-      await header.validate(blockchain)
+      BlockHeader.fromHeaderData({ ...data, extraData }, opts)
       t.fail(testCase)
     } catch (error: any) {
       t.ok(
@@ -244,10 +233,9 @@ tape('[Block]: Header functions', function (t) {
       Buffer.alloc(20),
       Buffer.alloc(21),
     ])
-    const epoch = new BN(common.consensusConfig().epoch)
-    header = BlockHeader.fromHeaderData({ ...data, number: epoch, extraData }, opts)
+    const epoch = BigInt((common.consensusConfig() as CliqueConfig).epoch)
     try {
-      await header.validate(blockchain)
+      BlockHeader.fromHeaderData({ ...data, number: epoch, extraData }, opts)
       st.fail(testCase)
     } catch (error: any) {
       st.ok(
@@ -260,21 +248,23 @@ tape('[Block]: Header functions', function (t) {
 
     st.end()
   })
-
+  /*
+  TODO: Decide if we need to move these tests to blockchain
   t.test('header validation -> poa checks', async function (st) {
-    const headerData = testData.blocks[0].blockHeader
+    const headerData = testDataPreLondon.blocks[0].blockHeader
 
-    const common = new Common({ chain: Chain.Goerli })
+    const common = new Common({ chain: Chain.Goerli, hardfork: Hardfork.Istanbul })
     const blockchain = new Mockchain()
 
-    const block = Block.fromRLPSerializedBlock(testData.genesisRLP, { common })
+    const genesisRlp = toBuffer(testDataPreLondon.genesisRLP)
+    const block = Block.fromRLPSerializedBlock(genesisRlp, { common })
     await blockchain.putBlock(block)
 
     headerData.number = 1
-    headerData.timestamp = new BN(1422494850)
+    headerData.timestamp = BigInt(1422494850)
     headerData.extraData = Buffer.alloc(97)
     headerData.mixHash = Buffer.alloc(32)
-    headerData.difficulty = new BN(2)
+    headerData.difficulty = BigInt(2)
 
     let testCase = 'should throw on lower than period timestamp diffs'
     let header = BlockHeader.fromHeaderData(headerData, { common })
@@ -286,7 +276,7 @@ tape('[Block]: Header functions', function (t) {
     }
 
     testCase = 'should not throw on timestamp diff equal to period'
-    headerData.timestamp = new BN(1422494864)
+    headerData.timestamp = BigInt(1422494864)
     header = BlockHeader.fromHeaderData(headerData, { common })
     try {
       await header.validate(blockchain)
@@ -328,7 +318,7 @@ tape('[Block]: Header functions', function (t) {
     headerData.mixHash = Buffer.alloc(32)
 
     testCase = 'should throw on invalid clique difficulty'
-    headerData.difficulty = new BN(3)
+    headerData.difficulty = BigInt(3)
     header = BlockHeader.fromHeaderData(headerData, { common })
     try {
       header.validateCliqueDifficulty(blockchain)
@@ -342,13 +332,13 @@ tape('[Block]: Header functions', function (t) {
     }
 
     testCase = 'validateCliqueDifficulty() should return true with NOTURN difficulty and one signer'
-    headerData.difficulty = new BN(2)
+    headerData.difficulty = BigInt(2)
     const poaBlockchain = new PoaMockchain()
     const cliqueSigner = Buffer.from(
       '64bf9cc30328b0e42387b3c82c614e6386259136235e20c1357bd11cdee86993',
       'hex'
     )
-    const poaBlock = Block.fromRLPSerializedBlock(testData.genesisRLP, { common, cliqueSigner })
+    const poaBlock = Block.fromRLPSerializedBlock(genesisRlp, { common, cliqueSigner })
     await poaBlockchain.putBlock(poaBlock)
 
     header = BlockHeader.fromHeaderData(headerData, { common, cliqueSigner })
@@ -361,7 +351,7 @@ tape('[Block]: Header functions', function (t) {
 
     testCase =
       'validateCliqueDifficulty() should return false with INTURN difficulty and one signer'
-    headerData.difficulty = new BN(1)
+    headerData.difficulty = BigInt(1)
     header = BlockHeader.fromHeaderData(headerData, { common, cliqueSigner })
     try {
       const res = header.validateCliqueDifficulty(poaBlockchain)
@@ -371,17 +361,17 @@ tape('[Block]: Header functions', function (t) {
     }
     st.end()
   })
-
+*/
   t.test('should test validateGasLimit()', function (st) {
     const testData = require('./testdata/bcBlockGasLimitTest.json').tests
     const bcBlockGasLimitTestData = testData.BlockGasLimit2p63m1
 
     Object.keys(bcBlockGasLimitTestData).forEach((key) => {
-      const genesisRlp = bcBlockGasLimitTestData[key].genesisRLP
+      const genesisRlp = toBuffer(bcBlockGasLimitTestData[key].genesisRLP)
       const parentBlock = Block.fromRLPSerializedBlock(genesisRlp)
-      const blockRlp = bcBlockGasLimitTestData[key].blocks[0].rlp
+      const blockRlp = toBuffer(bcBlockGasLimitTestData[key].blocks[0].rlp)
       const block = Block.fromRLPSerializedBlock(blockRlp)
-      st.equal(block.validateGasLimit(parentBlock), true)
+      st.doesNotThrow(() => block.validateGasLimit(parentBlock))
     })
 
     st.end()
@@ -391,27 +381,8 @@ tape('[Block]: Header functions', function (t) {
     const header1 = BlockHeader.fromHeaderData({ number: 1 })
     st.equal(header1.isGenesis(), false)
 
-    const header2 = BlockHeader.genesis()
+    const header2 = BlockHeader.fromHeaderData()
     st.equal(header2.isGenesis(), true)
-    st.end()
-  })
-
-  t.test('should test genesis hashes (mainnet default)', function (st) {
-    const testDataGenesis = require('./testdata/genesishashestest.json').test
-    const header = BlockHeader.genesis()
-    st.strictEqual(
-      header.hash().toString('hex'),
-      testDataGenesis.genesis_hash,
-      'genesis hash match'
-    )
-    st.end()
-  })
-
-  t.test('should test genesis parameters (ropsten)', function (st) {
-    const common = new Common({ chain: Chain.Ropsten, hardfork: Hardfork.Chainstart })
-    const genesis = BlockHeader.genesis({}, { common })
-    const ropstenStateRoot = '217b0bbcfb72e2d57e28f33cb361b9983513177755dc3f33ce3e7022ed62b77b'
-    st.strictEqual(genesis.stateRoot.toString('hex'), ropstenStateRoot, 'genesis stateRoot match')
     st.end()
   })
 
@@ -431,27 +402,6 @@ tape('[Block]: Header functions', function (t) {
       '8f5bab218b6bb34476f51ca588e9f4553a3a7ce5e13a66c660a5283e97e9a85a',
       'correct PoA clique hash (goerli block 1)'
     )
-    st.end()
-  })
-
-  t.test('should return the baseFeePerGas from genesis if defined', function (st) {
-    const common = Common.custom(
-      {
-        genesis: {
-          hash: '0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3',
-          timestamp: null,
-          gasLimit: 5000,
-          difficulty: 17179869184,
-          nonce: '0x0000000000000042',
-          extraData: '0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa',
-          stateRoot: '0xd7f8974fb5ac78d9ac099b9ad5018bedc2ce0a72dad1827a1709da30580f0544',
-          baseFeePerGas: '0x1000',
-        },
-      },
-      { baseChain: Chain.Mainnet, hardfork: Hardfork.London }
-    )
-    const header = BlockHeader.fromHeaderData({}, { common, initWithGenesisHeader: true })
-    st.ok(header.baseFeePerGas!.eq(new BN('1000', 16)), 'correct baseFeePerGas')
     st.end()
   })
 })

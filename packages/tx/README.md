@@ -35,7 +35,7 @@ All types of transaction objects are frozen with `Object.freeze()` which gives y
 
 The `Transaction` constructor receives a parameter of an [`@ethereumjs/common`](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/common) object that lets you specify the chain and hardfork to be used. If there is no `Common` provided the chain ID provided as a paramter on typed tx or the chain ID derived from the `v` value on signed EIP-155 conforming legacy txs will be taken (introduced in `v3.2.1`). In other cases the chain defaults to `mainnet`.
 
-Base default HF (determined by `Common`): `istanbul`
+Base default HF (determined by `Common`): `london`
 
 Starting with `v3.2.1` the tx library now deviates from the default HF for typed tx using the following rule: "The default HF is the default HF from `Common` if the tx type is active on that HF. Otherwise it is set to the first greater HF where the tx is active."
 
@@ -66,8 +66,6 @@ This library supports the following transaction types ([EIP-2718](https://eips.e
 - `FeeMarketEIP1559Transaction` ([EIP-1559](https://eips.ethereum.org/EIPS/eip-1559), gas fee market)
 - `AccessListEIP2930Transaction` ([EIP-2930](https://eips.ethereum.org/EIPS/eip-2930), optional access lists)
 - `Transaction`, the Ethereum standard tx up to `berlin`, now referred to as legacy txs with the introduction of tx types
-
-Please note that up to `v3.2.0` you mandatorily had to use a `Common` instance for typed tx instantiation and set the `hardfork` in `Common` to minimally `berlin` (`EIP-2930`) respectively `london` (`EIP-1559`) to allow for typed tx instantiation, since the current `Common` release series v2 (tx type support introduced with `v2.2.0`) still defaults to `istanbul` for backwards-compatibility reasons (also see tx default HF section below).
 
 #### Gas Fee Market Transactions (EIP-1559)
 
@@ -155,7 +153,7 @@ Legacy transaction are still valid transaction within Ethereum `mainnet` but wil
 See this [example script](./examples/transactions.ts) or the following code example on how to use.
 
 ```typescript
-import Common, { Chain } from '@ethereumjs/common'
+import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { Transaction } from '@ethereumjs/tx'
 
 const txParams = {
@@ -167,7 +165,7 @@ const txParams = {
   data: '0x7f7465737432000000000000000000000000000000000000000000000000000000600057',
 }
 
-const common = new Common({ chain: Chain.Mainnet })
+const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
 const tx = Transaction.fromTxData(txParams, { common })
 
 const privateKey = Buffer.from(
@@ -268,7 +266,8 @@ Here is an example of signing txs with `@ledgerhq/hw-app-eth` as of `v6.5.0`:
 ```typescript
 import { Transaction, FeeMarketEIP1559Transaction } from '@ethereumjs/tx'
 import Common, { Chain } from '@ethereumjs/common'
-import { rlp } from 'ethereumjs-util'
+import { bufArrToArr } from '@ethereumjs/util'
+import RLP from 'rlp'
 import Eth from '@ledgerhq/hw-app-eth'
 
 const eth = new Eth(transport)
@@ -284,7 +283,7 @@ const run = async () => {
   // Signing a legacy tx
   tx = Transaction.fromTxData(txData, { common })
   unsignedTx = tx.getMessageToSign(false)
-  unsignedTx = rlp.encode(unsignedTx) // ledger signTransaction API expects it to be serialized
+  unsignedTx = Buffer.from(RLP.encode(bufArrToArr(unsignedTx))) // ledger signTransaction API expects it to be serialized
   let { v, r, s } = await eth.signTransaction(bip32Path, unsignedTx)
   txData = { ...txData, v, r, s }
   signedTx = Transaction.fromTxData(txData, { common })
@@ -307,10 +306,10 @@ run()
 
 ### Fake Transaction
 
-Creating a fake transaction for use in e.g. `VM.runTx()` is simple, just overwrite `getSenderAddress()` with a custom [`Address`](https://github.com/ethereumjs/ethereumjs-util/blob/master/docs/classes/_address_.address.md) like so:
+Creating a fake transaction for use in e.g. `VM.runTx()` is simple, just overwrite `getSenderAddress()` with a custom [`Address`](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/util/docs/classes/Address.md) like so:
 
 ```typescript
-import { Address } from 'ethereumjs-util'
+import { Address } from '@ethereumjs/util'
 import { Transaction } from '@ethereumjs/tx'
 
 _getFakeTransaction(txParams: TxParams): Transaction {

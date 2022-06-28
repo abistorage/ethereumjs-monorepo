@@ -1,6 +1,7 @@
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
-import { BN, rlp, TWO_POW256 } from 'ethereumjs-util'
-import tape from 'tape'
+import { TWO_POW256 } from '@ethereumjs/util'
+import RLP from 'rlp'
+import * as tape from 'tape'
 import { FeeMarketEIP1559Transaction } from '../src'
 
 const testdata = require('./json/eip1559.json') // Source: Besu
@@ -12,7 +13,7 @@ const common = new Common({
 
 const validAddress = Buffer.from('01'.repeat(20), 'hex')
 const validSlot = Buffer.from('01'.repeat(32), 'hex')
-const chainId = new BN(4)
+const chainId = BigInt(4)
 
 tape('[FeeMarketEIP1559Transaction]', function (t) {
   t.test('cannot input decimal or negative values', (st) => {
@@ -33,7 +34,7 @@ tape('[FeeMarketEIP1559Transaction]', function (t) {
       '0xaa.1',
       -10.1,
       -1,
-      new BN(-10),
+      BigInt(-10),
       '-100',
       '-10.1',
       '-0xaa',
@@ -49,7 +50,12 @@ tape('[FeeMarketEIP1559Transaction]', function (t) {
     for (const value of values) {
       const txData: any = {}
       for (const testCase of cases) {
-        if (!(value === 'chainId' && (isNaN(<number>testCase) || testCase === false))) {
+        if (
+          !(
+            value === 'chainId' &&
+            ((typeof testCase === 'number' && isNaN(<number>testCase)) || testCase === false)
+          )
+        ) {
           txData[value] = testCase
           st.throws(() => {
             FeeMarketEIP1559Transaction.fromTxData(txData)
@@ -70,13 +76,13 @@ tape('[FeeMarketEIP1559Transaction]', function (t) {
       },
       { common }
     )
-    st.equals(tx.getUpfrontCost().toNumber(), 806, 'correct upfront cost with default base fee')
-    let baseFee = new BN(0)
-    st.equals(tx.getUpfrontCost(baseFee).toNumber(), 806, 'correct upfront cost with 0 base fee')
-    baseFee = new BN(4)
-    st.equals(
-      tx.getUpfrontCost(baseFee).toNumber(),
-      1006,
+    st.equal(tx.getUpfrontCost(), BigInt(806), 'correct upfront cost with default base fee')
+    let baseFee = BigInt(0)
+    st.equal(tx.getUpfrontCost(baseFee), BigInt(806), 'correct upfront cost with 0 base fee')
+    baseFee = BigInt(4)
+    st.equal(
+      tx.getUpfrontCost(baseFee),
+      BigInt(1006),
       'correct upfront cost with cost-changing base fee value'
     )
     st.end()
@@ -88,7 +94,7 @@ tape('[FeeMarketEIP1559Transaction]', function (t) {
       const pkey = Buffer.from(data.privateKey.slice(2), 'hex')
       const txn = FeeMarketEIP1559Transaction.fromTxData(data, { common })
       const signed = txn.sign(pkey)
-      const rlpSerialized = rlp.encode(signed.serialize())
+      const rlpSerialized = Buffer.from(RLP.encode(Uint8Array.from(signed.serialize())))
       st.ok(
         rlpSerialized.equals(Buffer.from(data.signedTransactionRLP.slice(2), 'hex')),
         'Should sign txs correctly'
@@ -197,7 +203,7 @@ tape('[FeeMarketEIP1559Transaction]', function (t) {
     st.doesNotThrow(() => {
       FeeMarketEIP1559Transaction.fromTxData(
         {
-          maxFeePerGas: TWO_POW256.subn(1),
+          maxFeePerGas: TWO_POW256 - BigInt(1),
           maxPriorityFeePerGas: 100,
           gasLimit: 1,
           value: 6,
@@ -208,7 +214,7 @@ tape('[FeeMarketEIP1559Transaction]', function (t) {
     st.throws(() => {
       FeeMarketEIP1559Transaction.fromTxData(
         {
-          maxFeePerGas: TWO_POW256.subn(1),
+          maxFeePerGas: TWO_POW256 - BigInt(1),
           maxPriorityFeePerGas: 100,
           gasLimit: 100,
           value: 6,

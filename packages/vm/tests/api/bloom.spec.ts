@@ -1,7 +1,7 @@
-import tape from 'tape'
+import * as tape from 'tape'
 
-import Bloom from '../../src/bloom'
-import * as utils from 'ethereumjs-util'
+import { Bloom } from '../../src/bloom'
+import * as utils from '@ethereumjs/util'
 
 const byteSize = 256
 
@@ -15,7 +15,7 @@ tape('bloom', (t: tape.Test) => {
   t.test('shouldnt initialize with invalid bitvector', (st) => {
     st.throws(
       () => new Bloom(utils.zeros(byteSize / 2)),
-      /AssertionError/,
+      /bitvectors must be 2048 bits long/,
       'should fail for invalid length'
     )
     st.end()

@@ -1,20 +1,18 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Block } from '@ethereumjs/block'
 import Common, { Hardfork } from '@ethereumjs/common'
-import { BN } from 'ethereumjs-util'
 import Blockchain from '../src'
-import testnet from './testdata/testnet.json'
+import * as testnet from './testdata/testnet.json'
 
 const buildChain = async (blockchain: Blockchain, common: Common, height: number) => {
   const blocks: Block[] = []
-  const londonBlockNumber = common.hardforkBlockBN('london')!.toNumber()
-  const genesis = Block.genesis({}, { common })
+  const londonBlockNumber = Number(common.hardforkBlock('london')!)
+  const genesis = blockchain.genesisBlock
   blocks.push(genesis)
-
   for (let number = 1; number <= height; number++) {
-    let baseFeePerGas = new BN(0)
+    let baseFeePerGas = BigInt(0)
     if (number === londonBlockNumber) {
-      baseFeePerGas = new BN(1000000000)
+      baseFeePerGas = BigInt(1000000000)
     } else if (number > londonBlockNumber) {
       baseFeePerGas = blocks[number - 1].header.calcNextBaseFee()
     }
@@ -23,8 +21,8 @@ const buildChain = async (blockchain: Blockchain, common: Common, height: number
         header: {
           number: number,
           parentHash: blocks[number - 1].hash(),
-          timestamp: blocks[number - 1].header.timestamp.addn(1),
-          gasLimit: number >= londonBlockNumber ? new BN(10000) : new BN(5000),
+          timestamp: blocks[number - 1].header.timestamp + BigInt(1),
+          gasLimit: number >= londonBlockNumber ? BigInt(10000) : BigInt(5000),
           baseFeePerGas: number >= londonBlockNumber ? baseFeePerGas : undefined,
         },
       },
@@ -62,17 +60,16 @@ tape('Proof of Stake - inserting blocks into blockchain', async (t) => {
       common: s.common,
       hardforkByHeadBlockNumber: true,
     })
-    const genesisHeader = await blockchain.getLatestHeader()
-
+    const genesisHeader = await blockchain.getCanonicalHeadHeader()
     t.equal(
       genesisHeader.hash().toString('hex'),
-      'ac9c82e94824e583ab7972ee0f48b520912ffd5456ae4c62943852c3fb31876d',
+      '1119dc5ff680bf7b4c3d9cd41168334dee127d46b3626482076025cdd498ed0b',
       'genesis hash matches'
     )
     await buildChain(blockchain, s.common, 15)
 
-    const latestHeader = await blockchain.getLatestHeader()
-    t.equal(latestHeader.number.toNumber(), 15, 'blockchain is at correct height')
+    const latestHeader = await blockchain.getCanonicalHeadHeader()
+    t.equal(latestHeader.number, BigInt(15), 'blockchain is at correct height')
 
     t.equal(
       (blockchain as any)._common.hardfork(),
@@ -80,19 +77,15 @@ tape('Proof of Stake - inserting blocks into blockchain', async (t) => {
       'HF should have been correctly updated'
     )
     const td = await blockchain.getTotalDifficulty(latestHeader.hash())
-    t.equal(
-      td.toNumber(),
-      1313601,
-      'should have calculated the correct post-Merge total difficulty'
-    )
+    t.equal(td, BigInt(1313601), 'should have calculated the correct post-Merge total difficulty')
 
     const powBlock = Block.fromBlockData({
       header: {
         number: 16,
-        difficulty: new BN(1),
+        difficulty: BigInt(1),
         parentHash: latestHeader.hash(),
-        timestamp: latestHeader.timestamp.addn(1),
-        gasLimit: new BN(10000),
+        timestamp: latestHeader.timestamp + BigInt(1),
+        gasLimit: BigInt(10000),
       },
     })
     try {

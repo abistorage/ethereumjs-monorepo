@@ -1,16 +1,15 @@
 import { Fetcher, FetcherOptions } from './fetcher'
-import { BN } from 'ethereumjs-util'
 import { Chain } from '../../blockchain'
 
 export interface BlockFetcherOptions extends FetcherOptions {
   /** Blockchain */
   chain: Chain
 
-  /** Block number to start fetching from */
-  first: BN
+  /* Block number to start fetching from */
+  first: bigint
 
-  /** How many blocks to fetch */
-  count: BN
+  /* How many blocks to fetch */
+  count: bigint
 
   /** Whether to fetch the blocks in reverse order (e.g. for beacon sync). Default: false */
   reverse?: boolean
@@ -20,7 +19,7 @@ export interface BlockFetcherOptions extends FetcherOptions {
 }
 
 export type JobTask = {
-  first: BN
+  first: bigint
   count: number
 }
 
@@ -33,11 +32,11 @@ export abstract class BlockFetcherBase<JobResult, StorageItem> extends Fetcher<
   /**
    * Where the fetcher starts apart from the tasks already in the `in` queue.
    */
-  first: BN
+  first: bigint
   /**
    * Number of items for the fetcher to fetch starting from (and including) `first`.
    */
-  count: BN
+  count: bigint
 
   protected reverse: boolean
 
@@ -64,26 +63,36 @@ export abstract class BlockFetcherBase<JobResult, StorageItem> extends Fetcher<
     const max = this.config.maxPerRequest
     const tasks: JobTask[] = []
     let debugStr = `first=${first}`
-    const pushedCount = new BN(0)
-    while (count.gten(max) && tasks.length < maxTasks) {
-      tasks.push({ first: first.clone(), count: max })
-      !this.reverse ? first.iaddn(max) : first.isubn(max)
-      count.isubn(max)
-      pushedCount.iaddn(max)
+    let pushedCount = BigInt(0)
+    const startedWith = first
+
+    while (count >= BigInt(max) && tasks.length < maxTasks) {
+      tasks.push({ first: first, count: max })
+      !this.reverse ? (first += BigInt(max)) : (first -= BigInt(max))
+      count -= BigInt(max)
+      pushedCount += BigInt(max)
     }
-    if (count.gtn(0) && tasks.length < maxTasks) {
-      tasks.push({ first: first.clone(), count: count.toNumber() })
-      !this.reverse ? first.iadd(count) : first.isub(count)
-      pushedCount.iadd(count)
-      count.isub(count)
+    if (count > BigInt(0) && tasks.length < maxTasks) {
+      tasks.push({ first: first, count: Number(count) })
+      !this.reverse ? (first += BigInt(count)) : (first -= BigInt(count))
+      pushedCount += count
+      count = BigInt(0)
     }
+
+    // If we started with where this.first was, i.e. there are no gaps and hence
+    // we can move this.first to where its now, and reduce count by pushedCount
+    if (startedWith === this.first) {
+      this.first = first
+      this.count = this.count - pushedCount
+    }
+
     debugStr += ` count=${pushedCount} reverse=${this.reverse}`
     this.debug(`Created new tasks num=${tasks.length} ${debugStr}`)
     return tasks
   }
 
   nextTasks(): void {
-    if (this.in.length === 0 && this.count.gtn(0)) {
+    if (this.in.length === 0 && this.count > BigInt(0)) {
       this.debug(
         `Fetcher pending with first=${this.first} count=${this.count} reverse=${this.reverse}`
       )
@@ -100,7 +109,7 @@ export abstract class BlockFetcherBase<JobResult, StorageItem> extends Fetcher<
    */
   clear() {
     let first = this.first
-    let last = this.first.add(this.count).subn(1)
+    let last = this.first + this.count - BigInt(1)
 
     // We have to loop because the jobs won't always be in increasing order.
     // Some jobs could have refetch tasks enqueued, so it is better to find
@@ -108,16 +117,16 @@ export abstract class BlockFetcherBase<JobResult, StorageItem> extends Fetcher<
     while (this.in.length > 0) {
       const job = this.in.remove()
       if (!job) break
-      if (job.task.first.lt(first)) {
+      if (job.task.first < first) {
         first = job.task.first
       }
-      const jobLast = job.task.first.addn(job.task.count).subn(1)
-      if (jobLast.gt(last)) {
+      const jobLast = job.task.first + BigInt(job.task.count) - BigInt(1)
+      if (jobLast > last) {
         last = jobLast
       }
     }
     this.first = first
-    this.count = last.sub(this.first).addn(1)
+    this.count = last - this.first + BigInt(1)
     // Already removed jobs from the `in` heap, just pass to super for further cleanup
     super.clear()
   }
@@ -133,26 +142,26 @@ export abstract class BlockFetcherBase<JobResult, StorageItem> extends Fetcher<
    * @param numberList List of block numbers
    * @param min Start block number
    */
-  enqueueByNumberList(numberList: BN[], min: BN, max: BN) {
+  enqueueByNumberList(numberList: bigint[], min: bigint, max: bigint) {
     // Check and update the height
-    const last = this.first.add(this.count).subn(1)
+    const last = this.first + this.count - BigInt(1)
     let updateHeightStr = ''
-    if (max.gt(last)) {
-      this.count.iadd(max.sub(last))
+    if (max > last) {
+      this.count += max - last
       updateHeightStr = `updated height=${max}`
     }
     // Re-enqueue the numbers which are less than `first` to refetch them,
     // else they will be fetched in the future with the jobs created by `nextTasks`.
-    numberList = numberList.filter((num) => num.lte(this.first))
+    numberList = numberList.filter((num) => num <= this.first)
     const numBlocks = numberList.length
     let bulkRequest = true
-    const seqCheckNum = min.clone()
+    let seqCheckNum = min
     for (let num = 1; num <= numBlocks; num++) {
-      if (!numberList.map((num) => num.toString()).includes(seqCheckNum.toString())) {
+      if (!numberList.includes(seqCheckNum)) {
         bulkRequest = false
         break
       }
-      seqCheckNum.iaddn(1)
+      seqCheckNum++
     }
 
     if (bulkRequest && numBlocks > 0) {

@@ -1,7 +1,12 @@
-import tape from 'tape'
-import Blockchain from '@ethereumjs/blockchain'
-import Common, { Chain as ChainCommon, ConsensusType, ConsensusAlgorithm } from '@ethereumjs/common'
-import { BN, Address } from 'ethereumjs-util'
+import * as tape from 'tape'
+import Blockchain, { CliqueConsensus } from '@ethereumjs/blockchain'
+import Common, {
+  Chain as ChainCommon,
+  ConsensusType,
+  ConsensusAlgorithm,
+  Hardfork,
+} from '@ethereumjs/common'
+import { Address } from '@ethereumjs/util'
 import { Config } from '../../lib/config'
 import { Chain } from '../../lib/blockchain'
 import { FullEthereumService } from '../../lib/service'
@@ -10,8 +15,12 @@ import MockServer from './mocks/mockserver'
 import { setup, destroy } from './util'
 
 tape('[Integration:Miner]', async (t) => {
+  const hardforks = new Common({ chain: ChainCommon.Goerli })
+    .hardforks()
+    .map((h) => (h.name === Hardfork.London ? { ...h, block: 0 } : h))
   const common = Common.custom(
     {
+      hardforks,
       consensus: {
         type: ConsensusType.ProofOfAuthority,
         algorithm: ConsensusAlgorithm.Clique,
@@ -23,10 +32,6 @@ tape('[Integration:Miner]', async (t) => {
     },
     { baseChain: ChainCommon.Goerli }
   )
-  // set genesis stateRoot for this custom common
-  // that's derived after generateCanonicalGenesis()
-  ;(common as any)._chainParams['genesis'].stateRoot =
-    '0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421'
   const accounts: [Address, Buffer][] = [
     [
       new Address(Buffer.from('0b90087d864e82a284dca15923f3776de6bb016f', 'hex')),
@@ -42,7 +47,7 @@ tape('[Integration:Miner]', async (t) => {
       validateBlocks: false,
       validateConsensus: false,
     })
-    blockchain.cliqueActiveSigners = () => [accounts[0][0]] // stub
+    ;(blockchain.consensus as CliqueConsensus).cliqueActiveSigners = () => [accounts[0][0]] // stub
     const chain = new Chain({ config, blockchain })
     const serviceConfig = new Config({
       common,
@@ -73,13 +78,15 @@ tape('[Integration:Miner]', async (t) => {
         height: 0,
         common,
       })
-      remoteService.chain.blockchain.cliqueActiveSigners = () => [accounts[0][0]] // stub
+      ;(remoteService.chain.blockchain.consensus as CliqueConsensus).cliqueActiveSigners = () => [
+        accounts[0][0],
+      ] // stub
       ;(remoteService as FullEthereumService).execution.run = async () => 1 // stub
       await server.discover('remotePeer1', '127.0.0.2')
-      const targetHeight = new BN(5)
+      const targetHeight = BigInt(5)
       remoteService.config.events.on(Event.SYNC_SYNCHRONIZED, async (chainHeight) => {
-        if (chainHeight.eq(targetHeight)) {
-          t.ok(remoteService.chain.blocks.height.eq(targetHeight), 'synced blocks successfully')
+        if (chainHeight === targetHeight) {
+          t.equal(remoteService.chain.blocks.height, targetHeight, 'synced blocks successfully')
           await destroy(server, service)
           await destroy(remoteServer, remoteService)
           t.end()

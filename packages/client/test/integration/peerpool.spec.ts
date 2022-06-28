@@ -1,4 +1,4 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import Blockchain from '@ethereumjs/blockchain'
 import { Config } from '../../lib/config'
 import { Event } from '../../lib/types'
@@ -63,7 +63,7 @@ tape('[Integration:PeerPool]', async (t) => {
 
   t.test('should handle peer messages', async (t) => {
     const config = new Config({ transports: [] })
-    const blockchain = new Blockchain({
+    const blockchain = await Blockchain.create({
       validateBlocks: false,
       validateConsensus: false,
     })

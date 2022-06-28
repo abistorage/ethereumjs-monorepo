@@ -1,9 +1,8 @@
 import { debug as createDebugLogger } from 'debug'
-import { Address, BN, KECCAK256_NULL, toBuffer } from 'ethereumjs-util'
+import { Address, KECCAK256_NULL, toBuffer, short } from '@ethereumjs/util'
 import { Block } from '@ethereumjs/block'
-import { ConsensusType } from '@ethereumjs/common'
+import { ConsensusType, Hardfork } from '@ethereumjs/common'
 import {
-  AccessList,
   AccessListItem,
   AccessListEIP2930Transaction,
   FeeMarketEIP1559Transaction,
@@ -11,105 +10,20 @@ import {
   TypedTransaction,
   Capability,
 } from '@ethereumjs/tx'
-import VM from './index'
-import Bloom from './bloom'
-import { default as EVM, EVMResult } from './evm/evm'
-import { short } from './evm/opcodes/util'
-import Message from './evm/message'
-import TxContext from './evm/txContext'
-import { EIP2929StateManager } from './state/interface'
+import { VM } from './vm'
+import { Bloom } from './bloom'
 import type {
   TxReceipt,
   BaseTxReceipt,
   PreByzantiumTxReceipt,
   PostByzantiumTxReceipt,
+  RunTxOpts,
+  RunTxResult,
+  AfterTxEvent,
 } from './types'
 
 const debug = createDebugLogger('vm:tx')
 const debugGas = createDebugLogger('vm:tx:gas')
-
-/**
- * Options for the `runTx` method.
- */
-export interface RunTxOpts {
-  /**
-   * The `@ethereumjs/block` the `tx` belongs to.
-   * If omitted, a default blank block will be used.
-   */
-  block?: Block
-  /**
-   * An `@ethereumjs/tx` to run
-   */
-  tx: TypedTransaction
-  /**
-   * If true, skips the nonce check
-   */
-  skipNonce?: boolean
-  /**
-   * If true, skips the balance check
-   */
-  skipBalance?: boolean
-
-  /**
-   * If true, skips the validation of the tx's gas limit
-   * against the block's gas limit.
-   */
-  skipBlockGasLimitValidation?: boolean
-
-  /**
-   * If true, adds a generated EIP-2930 access list
-   * to the `RunTxResult` returned.
-   *
-   * Option works with all tx types. EIP-2929 needs to
-   * be activated (included in `berlin` HF).
-   *
-   * Note: if this option is used with a custom {@link StateManager} implementation
-   * {@link StateManager.generateAccessList} must be implemented.
-   */
-  reportAccessList?: boolean
-
-  /**
-   * To obtain an accurate tx receipt input the block gas used up until this tx.
-   */
-  blockGasUsed?: BN
-}
-
-/**
- * Execution result of a transaction
- */
-export interface RunTxResult extends EVMResult {
-  /**
-   * Bloom filter resulted from transaction
-   */
-  bloom: Bloom
-
-  /**
-   * The amount of ether used by this transaction
-   */
-  amountSpent: BN
-
-  /**
-   * The tx receipt
-   */
-  receipt: TxReceipt
-
-  /**
-   * The amount of gas as that was refunded during the transaction (i.e. `gasUsed = totalGasConsumed - gasRefund`)
-   */
-  gasRefund?: BN
-
-  /**
-   * EIP-2930 access list generated for the tx (see `reportAccessList` option)
-   */
-  accessList?: AccessList
-}
-
-export interface AfterTxEvent extends RunTxResult {
-  /**
-   * The transaction which just got finished
-   */
-  transaction: TypedTransaction
-}
 
 /**
  * @ignore
@@ -123,16 +37,12 @@ export default async function runTx(this: VM, opts: RunTxOpts): Promise<RunTxRes
   // create a reasonable default if no block is given
   opts.block = opts.block ?? Block.fromBlockData({}, { common: opts.tx.common })
 
-  if (
-    opts.skipBlockGasLimitValidation !== true &&
-    opts.block.header.gasLimit.lt(opts.tx.gasLimit)
-  ) {
+  if (opts.skipBlockGasLimitValidation !== true && opts.block.header.gasLimit < opts.tx.gasLimit) {
     const msg = _errorMsg('tx has a higher gas limit than the block', this, opts.block, opts.tx)
     throw new Error(msg)
   }
 
-  // Have to cast as `EIP2929StateManager` to access clearWarmedAccounts
-  const state = this.stateManager as EIP2929StateManager
+  const state = this.eei.state
 
   if (opts.reportAccessList && !('generateAccessList' in state)) {
     const msg = _errorMsg(
@@ -212,7 +122,7 @@ export default async function runTx(this: VM, opts: RunTxOpts): Promise<RunTxRes
       const removed = [tx.getSenderAddress()]
       // Add the active precompiles as well
       // Note: `precompiles` is always updated if the hardfork of `common` changes
-      const activePrecompiles = this.precompiles
+      const activePrecompiles = this.evm.precompiles
       for (const [key] of activePrecompiles.entries()) {
         removed.push(Address.fromString('0x' + key))
       }
@@ -235,8 +145,7 @@ export default async function runTx(this: VM, opts: RunTxOpts): Promise<RunTxRes
 }
 
 async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
-  // Have to cast as `EIP2929StateManager` to access the EIP2929 methods
-  const state = this.stateManager as EIP2929StateManager
+  const state = this.eei.state
 
   const { tx, block } = opts
 
@@ -264,7 +173,8 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
 
   if (this._common.isActivatedEIP(2929)) {
     // Add origin and precompiles to warm addresses
-    for (const [addressStr] of this.precompiles) {
+    const activePrecompiles = this.evm.precompiles
+    for (const [addressStr] of activePrecompiles.entries()) {
       state.addWarmedAddress(Buffer.from(addressStr, 'hex'))
     }
     state.addWarmedAddress(caller.buf)
@@ -279,12 +189,12 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
 
   // Validate gas limit against tx base fee (DataFee + TxFee + Creation Fee)
   const txBaseFee = tx.getBaseFee()
-  const gasLimit = tx.gasLimit.clone()
-  if (gasLimit.lt(txBaseFee)) {
+  let gasLimit = tx.gasLimit
+  if (gasLimit < txBaseFee) {
     const msg = _errorMsg('base fee exceeds gas limit', this, block, tx)
     throw new Error(msg)
   }
-  gasLimit.isub(txBaseFee)
+  gasLimit -= txBaseFee
   if (this.DEBUG) {
     debugGas(`Subtracting base fee (${txBaseFee}) from gasLimit (-> ${gasLimit})`)
   }
@@ -295,7 +205,7 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
     // assert transaction.max_fee_per_gas >= block.base_fee_per_gas
     const maxFeePerGas = 'maxFeePerGas' in tx ? tx.maxFeePerGas : tx.gasPrice
     const baseFeePerGas = block.header.baseFeePerGas!
-    if (maxFeePerGas.lt(baseFeePerGas)) {
+    if (maxFeePerGas < baseFeePerGas) {
       const msg = _errorMsg(
         `Transaction's maxFeePerGas (${maxFeePerGas}) is less than the block's baseFeePerGas (${baseFeePerGas})`,
         this,
@@ -316,9 +226,13 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
     throw new Error(msg)
   }
 
-  if (!opts.skipBalance) {
-    const cost = tx.getUpfrontCost(block.header.baseFeePerGas)
-    if (balance.lt(cost)) {
+  const cost = tx.getUpfrontCost(block.header.baseFeePerGas)
+  if (opts.skipBalance) {
+    // if skipBalance, add tx cost to sender balance to ensure sufficient funds
+    fromAccount.balance += cost
+    await this.stateManager.putAccount(caller, fromAccount)
+  } else {
+    if (balance < cost) {
       const msg = _errorMsg(
         `sender doesn't have enough funds to send tx. The upfront cost is: ${cost} and the sender's account (${caller}) only has: ${balance}`,
         this,
@@ -327,12 +241,13 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
       )
       throw new Error(msg)
     }
+
     if (tx.supports(Capability.EIP1559FeeMarket)) {
       // EIP-1559 spec:
       // The signer must be able to afford the transaction
       // `assert balance >= gas_limit * max_fee_per_gas`
-      const cost = tx.gasLimit.mul((tx as FeeMarketEIP1559Transaction).maxFeePerGas).add(tx.value)
-      if (balance.lt(cost)) {
+      const cost = tx.gasLimit * (tx as FeeMarketEIP1559Transaction).maxFeePerGas + tx.value
+      if (balance < cost) {
         const msg = _errorMsg(
           `sender doesn't have enough funds to send tx. The max cost is: ${cost} and the sender's account (${caller}) only has: ${balance}`,
           this,
@@ -344,7 +259,7 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
     }
   }
   if (!opts.skipNonce) {
-    if (!nonce.eq(tx.nonce)) {
+    if (nonce !== tx.nonce) {
       const msg = _errorMsg(
         `the tx doesn't have the correct nonce. account has nonce of: ${nonce} tx has nonce of: ${tx.nonce}`,
         this,
@@ -355,29 +270,34 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
     }
   }
 
-  let gasPrice
-  let inclusionFeePerGas
+  let gasPrice: bigint
+  let inclusionFeePerGas: bigint
   // EIP-1559 tx
   if (tx.supports(Capability.EIP1559FeeMarket)) {
     const baseFee = block.header.baseFeePerGas!
-    inclusionFeePerGas = BN.min(
-      (tx as FeeMarketEIP1559Transaction).maxPriorityFeePerGas,
-      (tx as FeeMarketEIP1559Transaction).maxFeePerGas.sub(baseFee)
-    )
-    gasPrice = inclusionFeePerGas.add(baseFee)
+    inclusionFeePerGas =
+      (tx as FeeMarketEIP1559Transaction).maxPriorityFeePerGas <
+      (tx as FeeMarketEIP1559Transaction).maxFeePerGas - baseFee
+        ? (tx as FeeMarketEIP1559Transaction).maxPriorityFeePerGas
+        : (tx as FeeMarketEIP1559Transaction).maxFeePerGas - baseFee
+
+    gasPrice = inclusionFeePerGas + baseFee
   } else {
     // Have to cast as legacy tx since EIP1559 tx does not have gas price
     gasPrice = (<Transaction>tx).gasPrice
     if (this._common.isActivatedEIP(1559)) {
       const baseFee = block.header.baseFeePerGas!
-      inclusionFeePerGas = (<Transaction>tx).gasPrice.sub(baseFee)
+      inclusionFeePerGas = (<Transaction>tx).gasPrice - baseFee
     }
   }
 
   // Update from account's nonce and balance
-  fromAccount.nonce.iaddn(1)
-  const txCost = tx.gasLimit.mul(gasPrice)
-  fromAccount.balance.isub(txCost)
+  fromAccount.nonce += BigInt(1)
+  const txCost = tx.gasLimit * gasPrice
+  fromAccount.balance -= txCost
+  if (opts.skipBalance && fromAccount.balance < BigInt(0)) {
+    fromAccount.balance = BigInt(0)
+  }
   await state.putAccount(caller, fromAccount)
   if (this.DEBUG) {
     debug(
@@ -388,16 +308,8 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
   /*
    * Execute message
    */
-  const txContext = new TxContext(gasPrice, caller)
   const { value, data, to } = tx
-  const message = new Message({
-    caller,
-    gasLimit,
-    to,
-    value,
-    data,
-  })
-  const evm = new EVM(this, txContext, block)
+
   if (this.DEBUG) {
     debug(
       `Running tx=0x${
@@ -408,14 +320,23 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
     )
   }
 
-  const results = (await evm.executeMessage(message)) as RunTxResult
+  const results = (await this.evm.runCall({
+    block,
+    gasPrice,
+    caller,
+    gasLimit,
+    to,
+    value,
+    data,
+  })) as RunTxResult
+
   if (this.DEBUG) {
-    const { gasUsed, exceptionError, returnValue, gasRefund } = results.execResult
+    const { executionGasUsed, exceptionError, returnValue } = results.execResult
     debug('-'.repeat(100))
     debug(
-      `Received tx execResult: [ gasUsed=${gasUsed} exceptionError=${
+      `Received tx execResult: [ executionGasUsed=${executionGasUsed} exceptionError=${
         exceptionError ? `'${exceptionError.error}'` : 'none'
-      } returnValue=0x${short(returnValue)} gasRefund=${gasRefund ?? 0} ]`
+      } returnValue=0x${short(returnValue)} gasRefund=${results.gasRefund ?? 0} ]`
     )
   }
 
@@ -429,33 +350,34 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
   }
 
   // Calculate the total gas used
-  results.gasUsed.iadd(txBaseFee)
+  results.totalGasSpent = results.execResult.executionGasUsed + txBaseFee
   if (this.DEBUG) {
-    debugGas(`tx add baseFee ${txBaseFee} to gasUsed (-> ${results.gasUsed})`)
+    debugGas(`tx add baseFee ${txBaseFee} to totalGasSpent (-> ${results.totalGasSpent})`)
   }
 
   // Process any gas refund
-  let gasRefund = results.execResult.gasRefund ?? new BN(0)
+  let gasRefund = results.execResult.gasRefund ?? BigInt(0)
+  results.gasRefund = gasRefund
   const maxRefundQuotient = this._common.param('gasConfig', 'maxRefundQuotient')
-  if (!gasRefund.isZero()) {
-    const maxRefund = results.gasUsed.divn(maxRefundQuotient)
-    gasRefund = BN.min(gasRefund, maxRefund)
-    results.gasUsed.isub(gasRefund)
+  if (gasRefund !== BigInt(0)) {
+    const maxRefund = results.totalGasSpent / maxRefundQuotient
+    gasRefund = gasRefund < maxRefund ? gasRefund : maxRefund
+    results.totalGasSpent -= gasRefund
     if (this.DEBUG) {
-      debug(`Subtract tx gasRefund (${gasRefund}) from gasUsed (-> ${results.gasUsed})`)
+      debug(`Subtract tx gasRefund (${gasRefund}) from totalGasSpent (-> ${results.totalGasSpent})`)
     }
   } else {
     if (this.DEBUG) {
       debug(`No tx gasRefund`)
     }
   }
-  results.amountSpent = results.gasUsed.mul(gasPrice)
+  results.amountSpent = results.totalGasSpent * gasPrice
 
   // Update sender's balance
   fromAccount = await state.getAccount(caller)
-  const actualTxCost = results.gasUsed.mul(gasPrice)
-  const txCostDiff = txCost.sub(actualTxCost)
-  fromAccount.balance.iadd(txCostDiff)
+  const actualTxCost = results.totalGasSpent * gasPrice
+  const txCostDiff = txCost - actualTxCost
+  fromAccount.balance += txCostDiff
   await state.putAccount(caller, fromAccount)
   if (this.DEBUG) {
     debug(
@@ -466,13 +388,7 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
   // Update miner's balance
   let miner
   if (this._common.consensusType() === ConsensusType.ProofOfAuthority) {
-    // Backwards-compatibility check
-    // TODO: can be removed along VM v6 release
-    if ('cliqueSigner' in block.header) {
-      miner = block.header.cliqueSigner()
-    } else {
-      miner = Address.zero()
-    }
+    miner = block.header.cliqueSigner()
   } else {
     miner = block.header.coinbase
   }
@@ -480,9 +396,9 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
   const minerAccount = await state.getAccount(miner)
   // add the amount spent on gas to the miner's account
   if (this._common.isActivatedEIP(1559)) {
-    minerAccount.balance.iadd(results.gasUsed.mul(<BN>inclusionFeePerGas))
+    minerAccount.balance += results.totalGasSpent * inclusionFeePerGas!
   } else {
-    minerAccount.balance.iadd(results.amountSpent)
+    minerAccount.balance += results.amountSpent
   }
 
   // Put the miner account into the state. If the balance of the miner account remains zero, note that
@@ -506,11 +422,13 @@ async function _runTx(this: VM, opts: RunTxOpts): Promise<RunTxResult> {
       }
     }
   }
+
   await state.cleanupTouchedAccounts()
   state.clearOriginalStorageCache()
 
   // Generate the tx receipt
-  const cumulativeGasUsed = (opts.blockGasUsed ?? block.header.gasUsed).add(results.gasUsed)
+  const gasUsed = opts.blockGasUsed !== undefined ? opts.blockGasUsed : block.header.gasUsed
+  const cumulativeGasUsed = gasUsed + results.totalGasSpent
   results.receipt = await generateTxReceipt.bind(this)(tx, results, cumulativeGasUsed)
 
   /**
@@ -565,10 +483,10 @@ export async function generateTxReceipt(
   this: VM,
   tx: TypedTransaction,
   txResult: RunTxResult,
-  cumulativeGasUsed: BN
+  cumulativeGasUsed: bigint
 ): Promise<TxReceipt> {
   const baseReceipt: BaseTxReceipt = {
-    gasUsed: cumulativeGasUsed.toArrayLike(Buffer),
+    cumulativeBlockGasUsed: cumulativeGasUsed,
     bitvector: txResult.bloom.bitvector,
     logs: txResult.execResult.logs ?? [],
   }
@@ -578,7 +496,7 @@ export async function generateTxReceipt(
     debug(
       `Generate tx receipt transactionType=${
         tx.type
-      } gasUsed=${cumulativeGasUsed} bitvector=${short(baseReceipt.bitvector)} (${
+      } cumulativeBlockGasUsed=${cumulativeGasUsed} bitvector=${short(baseReceipt.bitvector)} (${
         baseReceipt.bitvector.length
       } bytes) logs=${baseReceipt.logs.length}`
     )
@@ -586,7 +504,7 @@ export async function generateTxReceipt(
 
   if (!tx.supports(Capability.EIP2718TypedTransaction)) {
     // Legacy transaction
-    if (this._common.gteHardfork('byzantium')) {
+    if (this._common.gteHardfork(Hardfork.Byzantium)) {
       // Post-Byzantium
       receipt = {
         status: txResult.execResult.exceptionError ? 0 : 1, // Receipts have a 0 as status on error
@@ -594,7 +512,7 @@ export async function generateTxReceipt(
       } as PostByzantiumTxReceipt
     } else {
       // Pre-Byzantium
-      const stateRoot = await this.stateManager.getStateRoot(true)
+      const stateRoot = await this.stateManager.getStateRoot()
       receipt = {
         stateRoot: stateRoot,
         ...baseReceipt,

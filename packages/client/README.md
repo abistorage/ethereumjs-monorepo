@@ -19,7 +19,7 @@ Here are some use cases:
 - Set up your own local development networks (PoA Clique or PoW with CPU miner)
 - Run a network with your own custom [EthereumJS VM](../vm)
 - Analyze what's in the Ethereum `mainnet` [transaction pool](./lib/sync/txpool.ts)
-- Run experiments with Ethereum browser sync (see [example](./examples/light-browser-sync.md))
+- Run experiments with Ethereum browser sync (see [example](./examples/light-browser-sync.md)) **currently unsupported due to browser dependency issues** 
 
 The client has an extremely modular design by building upon central other libraries in the EthereumJS monorepo ([VM](../vm), [Merkle Patricia Tree](../trie), [Blockchain](../blockchain), [Block](../block), [tx](../tx), [devp2p](../devp2p) and [Common](../common)) and is therefore extremely well suited for a deep dive into Ethereum protocol development.
 
@@ -91,13 +91,13 @@ The client currently supports `full` sync being set as a default and has experim
 
 ### The Merge
 
-The EthereumJS client is participating actively in the different testnets preparing for the Merge hardfork and the team is following up on implementing the Merge [specs](https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/merge.md) and updating along new versions of the specification.
+The EthereumJS client is participating actively in the different testnets preparing for the Merge hardfork and the team is following up on implementing the Merge [specs](https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/paris.md) and updating along new versions of the specification.
 
 There are dedicated instructions on how to setup for running the client in conjunction with a consensus (Eth 2.0) client (e.g. [Lodestar](https://github.com/ChainSafe/lodestar)).
 
 Testnet Instructions:
 
-- [Kiln v2 Public Testnet](./kiln/)
+- [Kiln v2.1 Public Testnet](./kiln/)
 
 #### Sync Scenarios
 
@@ -108,10 +108,7 @@ Currently the following sync scenarios are **supported**:
 - **EL and CL Live Transition**: both clients follow the head of the respective chains pre Merge and go through the Merge transition live and in sync
 - **EL synced to Merge block, CL Merge transition**: the EL client has been synced to the Merge transitition block and is waiting for CL requests, the CL is syncing through the transition and starts EL requests along
 - **Resume syncing with equally synced clients / CL client behind**: sync can be resumed with EL client and CL client synced to the respective counterparts of the beacon and embedded execution chain, CL client can also be somewhat behind the EL client
-
-**Unsupported** sync scenarios:
-
-- **CL client ahead of EL client**: if the CL client has been synced without the EL client being connected and is therefore *ahead* of the EL client post Merge, sync will not be able to fully resume (this will need an optimistic sync implementation)
+- **CL client ahead of EL client**: if the CL client has been synced without the EL client syncing in *lockstep* on/after merge (e.g. using weak subjectivity sync) and is therefore *ahead* of the EL client post-merge, the EL backfills blocks and brings the chain up-to-date with the head fcUs being issued by the CL via [optimistic](https://github.com/ethereum/consensus-specs/blob/dev/sync/optimistic.md) (beacon) sync (since `v0.5.0`)
 
 ### Custom Chains
 
@@ -119,7 +116,7 @@ The EthereumJS client supports running custom chains based on a custom chain con
 
 #### Common-based Configuration
 
-We have got our own flexible chain configuration and genesis state configuration format applied in the `Common` library, see the `Common` [chain JSON files](../common/src/chains/) as well as corresponding [Genesis JSON files](../common/src/genesisStates/) for inspiration.
+We have got our own flexible chain configuration and genesis state configuration format applied in the `Common` library, see the `Common` [chain JSON files](../common/src/chains/) as well as corresponding blockchain [Genesis JSON files](../blockchain/src/genesisStates/) for inspiration.
 
 Custom chain files following this format can be passed in to the client with the following options:
 

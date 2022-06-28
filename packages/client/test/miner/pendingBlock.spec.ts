@@ -1,14 +1,14 @@
-import tape from 'tape'
-import td from 'testdouble'
+import * as tape from 'tape'
+import * as td from 'testdouble'
 import Common, { Chain as CommonChain, Hardfork } from '@ethereumjs/common'
 import { Transaction } from '@ethereumjs/tx'
 import { BlockHeader } from '@ethereumjs/block'
 import VM from '@ethereumjs/vm'
-import { DefaultStateManager, StateManager } from '@ethereumjs/vm/dist/state'
-import { Account, Address, BN } from 'ethereumjs-util'
+import { Address, Account } from '@ethereumjs/util'
 import { Config } from '../../lib/config'
 import { TxPool } from '../../lib/service/txpool'
 import { PendingBlock } from '../../lib/miner'
+import { VmState } from '@ethereumjs/vm/dist/eei/vmState'
 
 const A = {
   address: new Address(Buffer.from('0b90087d864e82a284dca15923f3776de6bb016f', 'hex')),
@@ -26,25 +26,24 @@ const B = {
   ),
 }
 
-const setBalance = async (stateManager: StateManager, address: Address, balance: BN) => {
-  // this fn can be replaced with modifyAccountFields() when #1369 is available
-  await stateManager.checkpoint()
-  await stateManager.putAccount(address, new Account(new BN(0), balance))
-  await stateManager.commit()
+const setBalance = async (vm: VM, address: Address, balance: bigint) => {
+  await vm.stateManager.checkpoint()
+  await vm.stateManager.modifyAccountFields(address, { balance })
+  await vm.stateManager.commit()
 }
 
 const common = new Common({ chain: CommonChain.Rinkeby, hardfork: Hardfork.Berlin })
 const config = new Config({ transports: [], common })
 
 const setup = () => {
+  const stateManager = { getAccount: () => new Account(BigInt(0), BigInt('50000000000000000000')) }
   const service: any = {
     chain: {
-      headers: { height: new BN(0), latest: BlockHeader.fromHeaderData({}, { common }) },
+      headers: { height: BigInt(0) },
+      getCanonicalHeadHeader: () => BlockHeader.fromHeaderData({}, { common }),
     },
     execution: {
-      vm: {
-        stateManager: { getAccount: () => new Account(new BN(0), new BN('50000000000000000000')) },
-      },
+      vm: { stateManager, eei: { state: { getAccount: () => stateManager.getAccount() } } },
     },
   }
   const txPool = new TxPool({ config, service })
@@ -52,13 +51,13 @@ const setup = () => {
 }
 
 tape('[PendingBlock]', async (t) => {
-  const originalValidate = BlockHeader.prototype.validate
-  BlockHeader.prototype.validate = td.func<any>()
+  const originalValidate = BlockHeader.prototype._consensusFormatValidation
+  BlockHeader.prototype._consensusFormatValidation = td.func<any>()
   td.replace('@ethereumjs/block', { BlockHeader })
 
-  const originalSetStateRoot = DefaultStateManager.prototype.setStateRoot
-  DefaultStateManager.prototype.setStateRoot = td.func<any>()
-  td.replace('@ethereumjs/vm/dist/state', { DefaultStateManager })
+  const originalSetStateRoot = VmState.prototype.setStateRoot
+  VmState.prototype.setStateRoot = td.func<any>()
+  td.replace('@ethereumjs/vm/dist/vmState', { VmState })
 
   const createTx = (
     from = A,
@@ -87,20 +86,20 @@ tape('[PendingBlock]', async (t) => {
   t.test('should start and build', async (t) => {
     const { txPool } = setup()
     const vm = await VM.create({ common })
-    await setBalance(vm.stateManager, A.address, new BN(5000000000000000))
-    await setBalance(vm.stateManager, B.address, new BN(5000000000000000))
+    await setBalance(vm, A.address, BigInt(5000000000000000))
+    await setBalance(vm, B.address, BigInt(5000000000000000))
     await txPool.add(txA01)
     await txPool.add(txA02)
     const pendingBlock = new PendingBlock({ config, txPool })
-    const parentBlock = await vm.blockchain.getLatestBlock()
+    const parentBlock = await vm.blockchain.getCanonicalHeadBlock()
     const payloadId = await pendingBlock.start(vm, parentBlock)
     t.equal(pendingBlock.pendingPayloads.length, 1, 'should set the pending payload')
     await txPool.add(txB01)
     const built = await pendingBlock.build(payloadId)
     if (!built) return t.fail('pendingBlock did not return')
     const [block, receipts] = built
-    t.ok(block.header.number.eqn(1), 'should have built block number 1')
-    t.equal(block.transactions.length, 3, 'should include txs from pool')
+    t.equal(block?.header.number, BigInt(1), 'should have built block number 1')
+    t.equal(block?.transactions.length, 3, 'should include txs from pool')
     t.equal(receipts.length, 3, 'receipts should match number of transactions')
     t.equal(pendingBlock.pendingPayloads.length, 0, 'should reset the pending payload after build')
     t.end()
@@ -111,8 +110,8 @@ tape('[PendingBlock]', async (t) => {
     await txPool.add(txA01)
     const pendingBlock = new PendingBlock({ config, txPool })
     const vm = await VM.create({ common })
-    await setBalance(vm.stateManager, A.address, new BN(5000000000000000))
-    const parentBlock = await vm.blockchain.getLatestBlock()
+    await setBalance(vm, A.address, BigInt(5000000000000000))
+    const parentBlock = await vm.blockchain.getCanonicalHeadBlock()
     const payloadId = await pendingBlock.start(vm, parentBlock)
     t.equal(pendingBlock.pendingPayloads.length, 1, 'should set the pending payload')
     pendingBlock.stop(payloadId)
@@ -127,7 +126,7 @@ tape('[PendingBlock]', async (t) => {
   t.test('should stop adding txs when block is full', async (t) => {
     const { txPool } = setup()
     const vm = await VM.create({ common })
-    await setBalance(vm.stateManager, A.address, new BN(5000000000000000))
+    await setBalance(vm, A.address, BigInt(5000000000000000))
     await txPool.add(txA01)
     await txPool.add(txA02)
     const txA03 = Transaction.fromTxData(
@@ -141,14 +140,15 @@ tape('[PendingBlock]', async (t) => {
     ).sign(A.privateKey)
     await txPool.add(txA03)
     const pendingBlock = new PendingBlock({ config, txPool })
-    const parentBlock = await vm.blockchain.getLatestBlock()
+    await setBalance(vm, A.address, BigInt(5000000000000000))
+    const parentBlock = await vm.blockchain.getCanonicalHeadBlock()
     const payloadId = await pendingBlock.start(vm, parentBlock)
     t.equal(pendingBlock.pendingPayloads.length, 1, 'should set the pending payload')
     const built = await pendingBlock.build(payloadId)
     if (!built) return t.fail('pendingBlock did not return')
     const [block, receipts] = built
-    t.ok(block.header.number.eqn(1), 'should have built block number 1')
-    t.equal(block.transactions.length, 2, 'should include txs from pool that fit in the block')
+    t.equal(block?.header.number, BigInt(1), 'should have built block number 1')
+    t.equal(block?.transactions.length, 2, 'should include txs from pool that fit in the block')
     t.equal(receipts.length, 2, 'receipts should match number of transactions')
     t.equal(pendingBlock.pendingPayloads.length, 0, 'should reset the pending payload after build')
     t.end()
@@ -159,13 +159,13 @@ tape('[PendingBlock]', async (t) => {
     await txPool.add(txA01)
     const pendingBlock = new PendingBlock({ config, txPool })
     const vm = await VM.create({ common })
-    const parentBlock = await vm.blockchain.getLatestBlock()
+    const parentBlock = await vm.blockchain.getCanonicalHeadBlock()
     const payloadId = await pendingBlock.start(vm, parentBlock)
     t.equal(pendingBlock.pendingPayloads.length, 1, 'should set the pending payload')
     const built = await pendingBlock.build(payloadId)
     if (!built) return t.fail('pendingBlock did not return')
     const [block, receipts] = built
-    t.ok(block.header.number.eqn(1), 'should have built block number 1')
+    t.equal(block?.header.number, BigInt(1), 'should have built block number 1')
     t.equal(
       block.transactions.length,
       0,
@@ -181,8 +181,8 @@ tape('[PendingBlock]', async (t) => {
     // according to https://github.com/testdouble/testdouble.js/issues/379#issuecomment-415868424
     // mocking indirect dependencies is not properly supported, but it works for us in this file,
     // so we will replace the original functions to avoid issues in other tests that come after
-    BlockHeader.prototype.validate = originalValidate
-    DefaultStateManager.prototype.setStateRoot = originalSetStateRoot
+    BlockHeader.prototype._consensusFormatValidation = originalValidate
+    VmState.prototype.setStateRoot = originalSetStateRoot
     t.end()
   })
 })

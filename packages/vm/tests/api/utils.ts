@@ -1,29 +1,29 @@
-import { Account, Address, BN } from 'ethereumjs-util'
+import { Account, Address } from '@ethereumjs/util'
 import Blockchain from '@ethereumjs/blockchain'
-import VM from '../../src/index'
-import { VMOpts } from '../../src'
+import { VM } from '../../src/vm'
+import { VMOpts } from '../../src/types'
 import { Block } from '@ethereumjs/block'
 import { TransactionFactory } from '@ethereumjs/tx'
 import Common from '@ethereumjs/common'
 
-const level = require('level-mem')
+import { MemoryLevel } from 'memory-level'
 
-export function createAccount(nonce: BN = new BN(0), balance: BN = new BN(0xfff384)) {
+export function createAccount(nonce = BigInt(0), balance = BigInt(0xfff384)) {
   return new Account(nonce, balance)
 }
 
-export async function setBalance(vm: VM, address: Address, balance = new BN(100000000)) {
-  const account = createAccount(new BN(0), balance)
-  await vm.stateManager.checkpoint()
-  await vm.stateManager.putAccount(address, account)
-  await vm.stateManager.commit()
+export async function setBalance(vm: VM, address: Address, balance = BigInt(100000000)) {
+  const account = createAccount(BigInt(0), balance)
+  await vm.eei.state.checkpoint()
+  await vm.eei.state.putAccount(address, account)
+  await vm.eei.state.commit()
 }
 
-export function setupVM(opts: VMOpts & { genesisBlock?: Block } = {}) {
-  const db = level()
+export async function setupVM(opts: VMOpts & { genesisBlock?: Block } = {}) {
+  const db: any = new MemoryLevel()
   const { common, genesisBlock } = opts
   if (!opts.blockchain) {
-    opts.blockchain = new Blockchain({
+    opts.blockchain = await Blockchain.create({
       db,
       validateBlocks: false,
       validateConsensus: false,
@@ -31,9 +31,14 @@ export function setupVM(opts: VMOpts & { genesisBlock?: Block } = {}) {
       genesisBlock,
     })
   }
-  return new VM({
+  const vm = await VM.create({
     ...opts,
   })
+  return vm
+}
+
+export async function getEEI() {
+  return (await setupVM()).eei
 }
 
 export function getTransaction(
@@ -66,7 +71,7 @@ export function getTransaction(
   }
 
   if (txType === 1) {
-    txParams['chainId'] = common.chainIdBN()
+    txParams['chainId'] = common.chainId()
     txParams['accessList'] = [
       {
         address: '0x0000000000000000000000000000000000000101',
@@ -78,11 +83,11 @@ export function getTransaction(
     ]
   } else if (txType === 2) {
     txParams['gasPrice'] = undefined
-    txParams['maxFeePerGas'] = new BN(100)
-    txParams['maxPriorityFeePerGas'] = new BN(10)
+    txParams['maxFeePerGas'] = BigInt(100)
+    txParams['maxPriorityFeePerGas'] = BigInt(10)
   }
 
-  const tx = TransactionFactory.fromTxData(txParams, { common })
+  const tx = TransactionFactory.fromTxData(txParams, { common, freeze: false })
 
   if (sign) {
     const privateKey = Buffer.from(
@@ -93,4 +98,13 @@ export function getTransaction(
   }
 
   return tx
+}
+
+/**
+ * Checks if in a karma test runner.
+ * @returns boolean whether running in karma
+ */
+export function isRunningInKarma(): Boolean {
+  // eslint-disable-next-line no-undef
+  return typeof (<any>globalThis).window !== 'undefined' && (<any>globalThis).window.__karma__
 }

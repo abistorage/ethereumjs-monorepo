@@ -1,8 +1,9 @@
-import tape from 'tape'
-import { Account, Address, BN, bufferToHex } from 'ethereumjs-util'
+import * as tape from 'tape'
+import { Account, Address, bufferToHex } from '@ethereumjs/util'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
-import VM from '../../../src'
+import { VM } from '../../../src/vm'
 import { AccessListEIP2930Transaction } from '@ethereumjs/tx'
+import EVM from '@ethereumjs/evm'
 
 const common = new Common({
   eips: [2718, 2929, 2930],
@@ -31,8 +32,8 @@ tape('EIP-2930 Optional Access Lists tests', (t) => {
     const txnWithAccessList = AccessListEIP2930Transaction.fromTxData(
       {
         accessList: access,
-        chainId: 1,
-        gasLimit: 100000,
+        chainId: BigInt(1),
+        gasLimit: BigInt(100000),
         to: contractAddress,
       },
       { common }
@@ -40,19 +41,20 @@ tape('EIP-2930 Optional Access Lists tests', (t) => {
     const txnWithoutAccessList = AccessListEIP2930Transaction.fromTxData(
       {
         accessList: [],
-        chainId: 1,
-        gasLimit: 100000,
+        chainId: BigInt(1),
+        gasLimit: BigInt(100000),
         to: contractAddress,
       },
       { common }
     ).sign(privateKey)
-    const vm = new VM({ common })
+
+    const vm = await VM.create({ common })
 
     // contract code PUSH1 0x00 SLOAD STOP
     await vm.stateManager.putContractCode(contractAddress, Buffer.from('60005400', 'hex'))
 
     const address = Address.fromPrivateKey(privateKey)
-    const initialBalance = new BN(10).pow(new BN(18))
+    const initialBalance = BigInt(10) ** BigInt(18)
 
     const account = await vm.stateManager.getAccount(address)
     await vm.stateManager.putAccount(
@@ -62,20 +64,20 @@ tape('EIP-2930 Optional Access Lists tests', (t) => {
 
     let trace: any = []
 
-    vm.on('step', (o: any) => {
+    ;(<EVM>vm.evm).on('step', (o: any) => {
       trace.push([o.opcode.name, o.gasLeft])
     })
 
     await vm.runTx({ tx: txnWithAccessList })
     st.ok(trace[1][0] == 'SLOAD')
-    let gasUsed = trace[1][1].sub(trace[2][1]).toNumber()
-    st.equal(gasUsed, 100, 'charge warm sload gas')
+    let gasUsed = trace[1][1] - trace[2][1]
+    st.equal(gasUsed, BigInt(100), 'charge warm sload gas')
 
     trace = []
     await vm.runTx({ tx: txnWithoutAccessList, skipNonce: true })
     st.ok(trace[1][0] == 'SLOAD')
-    gasUsed = trace[1][1].sub(trace[2][1]).toNumber()
-    st.equal(gasUsed, 2100, 'charge cold sload gas')
+    gasUsed = trace[1][1] - trace[2][1]
+    st.equal(gasUsed, BigInt(2100), 'charge cold sload gas')
 
     st.end()
   })

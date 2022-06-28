@@ -1,10 +1,10 @@
-import tape from 'tape'
-import { CheckpointTrie } from '../src'
+import * as tape from 'tape'
+import { CheckpointTrie, LevelDB } from '../src'
 
 tape('official tests', async function (t) {
   const jsonTests = require('./fixtures/trietest.json').tests
   const testNames = Object.keys(jsonTests)
-  let trie = new CheckpointTrie()
+  let trie = new CheckpointTrie({ db: new LevelDB() })
 
   for (const testName of testNames) {
     const inputs = jsonTests[testName].in
@@ -20,7 +20,7 @@ tape('official tests', async function (t) {
       }
     }
     t.equal('0x' + trie.root.toString('hex'), expect)
-    trie = new CheckpointTrie()
+    trie = new CheckpointTrie({ db: new LevelDB() })
   }
   t.end()
 })
@@ -28,7 +28,7 @@ tape('official tests', async function (t) {
 tape('official tests any order', async function (t) {
   const jsonTests = require('./fixtures/trieanyorder.json').tests
   const testNames = Object.keys(jsonTests)
-  let trie = new CheckpointTrie()
+  let trie = new CheckpointTrie({ db: new LevelDB() })
   for (const testName of testNames) {
     const test = jsonTests[testName]
     const keys = Object.keys(test.in)
@@ -47,7 +47,7 @@ tape('official tests any order', async function (t) {
       await trie.put(Buffer.from(key), Buffer.from(val))
     }
     t.equal('0x' + trie.root.toString('hex'), test.root)
-    trie = new CheckpointTrie()
+    trie = new CheckpointTrie({ db: new LevelDB() })
   }
   t.end()
 })

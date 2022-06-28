@@ -1,8 +1,7 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import {
   arrToBufArr,
   Address,
-  BN,
   bufArrToArr,
   zeros,
   zeroAddress,
@@ -18,11 +17,16 @@ import {
   toUnsigned,
   toUtf8,
   addHexPrefix,
+  short,
   toBuffer,
   baToJSON,
   intToBuffer,
   intToHex,
   validateNoLeadingZeroes,
+  bufferToBigInt,
+  bigIntToBuffer,
+  bigIntToUnpaddedBuffer,
+  bigIntToHex,
 } from '../src'
 
 tape('zeros function', function (t) {
@@ -93,7 +97,7 @@ tape('unpadHexString', function (t) {
   t.test('should unpad a hex prefixed string', function (st) {
     const str = '0x0000000006600'
     const r = unpadHexString(str)
-    st.equal(r, '6600')
+    st.equal(r, '0x6600')
     st.end()
   })
   t.test('should throw if input is not hex-prefixed', function (st) {
@@ -198,7 +202,7 @@ tape('toUnsigned', function (t) {
   t.test('should convert a signed (negative) number to unsigned', function (st) {
     const neg = '-452312848583266388373324160190187140051835877600158453279131187530910662656'
     const hex = 'ff00000000000000000000000000000000000000000000000000000000000000'
-    const num = new BN(neg)
+    const num = BigInt(neg)
 
     st.equal(toUnsigned(num).toString('hex'), hex)
     st.end()
@@ -207,7 +211,7 @@ tape('toUnsigned', function (t) {
   t.test('should convert a signed (positive) number to unsigned', function (st) {
     const neg = '452312848583266388373324160190187140051835877600158453279131187530910662656'
     const hex = '0100000000000000000000000000000000000000000000000000000000000000'
-    const num = new BN(neg)
+    const num = BigInt(neg)
 
     st.equal(toUnsigned(num).toString('hex'), hex)
     st.end()
@@ -222,6 +226,24 @@ tape('hex prefix', function (t) {
   })
   t.test('should return on non-string input', function (st) {
     st.equal(addHexPrefix(1 as any), 1)
+    st.end()
+  })
+})
+
+tape('short', function (t) {
+  const string = '657468657265756d000000000000000000000000000000000000000000000000'
+  const shortened = '657468657265756d0000000000000000000000000000000000…'
+  const shortenedToTen = '6574686572…'
+  t.test('should short string', function (st) {
+    st.equal(short(string), shortened)
+    st.end()
+  })
+  t.test('should short buffer', function (st) {
+    st.equal(short(Buffer.from(string, 'hex')), shortened)
+    st.end()
+  })
+  t.test('should short buffer to 10 chars', function (st) {
+    st.equal(short(Buffer.from(string, 'hex'), 10), shortenedToTen)
     st.end()
   })
 })
@@ -265,8 +287,8 @@ tape('toBuffer', function (t) {
     st.ok(toBuffer(null).equals(Buffer.allocUnsafe(0)))
     // undefined
     st.ok(toBuffer(undefined).equals(Buffer.allocUnsafe(0)))
-    // 'toBN'
-    st.ok(toBuffer(new BN(1)).equals(Buffer.from([1])))
+    // BigInt
+    st.ok(toBuffer(BigInt(1)).equals(Buffer.from([1])))
     // 'toArray'
     st.ok(
       toBuffer({
@@ -282,7 +304,7 @@ tape('toBuffer', function (t) {
       toBuffer({ test: 1 } as any)
     })
     st.throws(function () {
-      toBuffer(new BN(-10))
+      toBuffer(BigInt(-10))
     })
     st.end()
   })
@@ -441,5 +463,30 @@ tape('bufArrToArr', function (st) {
   ]
   st.deepEqual(bufArrToArr(buf), uint8)
   st.deepEqual(bufArrToArr(bufArr), uint8Arr)
+  st.end()
+})
+
+tape('bufferToBigInt', (st) => {
+  const buf = toBuffer('0x123')
+  st.equal(BigInt(0x123), bufferToBigInt(buf))
+  st.end()
+})
+
+tape('bigIntToBuffer', (st) => {
+  const num = BigInt(0x123)
+  st.deepEqual(toBuffer('0x123'), bigIntToBuffer(num))
+  st.end()
+})
+
+tape('bigIntToUnpaddedBuffer', function (t) {
+  t.test('should equal unpadded buffer value', function (st) {
+    st.ok(bigIntToUnpaddedBuffer(BigInt(0)).equals(Buffer.from([])))
+    st.ok(bigIntToUnpaddedBuffer(BigInt(100)).equals(Buffer.from('64', 'hex')))
+    st.end()
+  })
+})
+
+tape('bigIntToHex', (st) => {
+  st.equal(bigIntToHex(BigInt(1)), '0x1')
   st.end()
 })

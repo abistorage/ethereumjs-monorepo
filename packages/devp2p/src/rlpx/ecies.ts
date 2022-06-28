@@ -1,7 +1,8 @@
-import crypto, { Decipher } from 'crypto'
+import * as crypto from 'crypto'
 import { debug as createDebugLogger } from 'debug'
-import { publicKeyCreate, ecdh, ecdsaRecover, ecdsaSign } from 'secp256k1'
-import { rlp } from 'ethereumjs-util'
+import { bufArrToArr } from '@ethereumjs/util'
+import RLP from 'rlp'
+import { getPublicKey } from 'ethereum-cryptography/secp256k1'
 import { unstrictDecode } from '../util'
 import { MAC } from './mac'
 
@@ -16,6 +17,8 @@ import {
   buffer2int,
   zfill,
 } from '../util'
+import { ecdsaSign, ecdsaRecover, ecdh } from 'ethereum-cryptography/secp256k1-compat'
+type Decipher = crypto.Decipher
 
 const debug = createDebugLogger('devp2p:rlpx:peer')
 
@@ -25,10 +28,9 @@ function ecdhX(publicKey: Buffer, privateKey: Buffer) {
     const pubKey = new Uint8Array(33)
     pubKey[0] = (y[31] & 1) === 0 ? 0x02 : 0x03
     pubKey.set(x, 1)
-    return pubKey
+    return pubKey.slice(1)
   }
-  // @ts-ignore
-  return Buffer.from(ecdh(publicKey, privateKey, { hashfn }, Buffer.alloc(33)).slice(1))
+  return Buffer.from(ecdh(publicKey, privateKey, { hashfn: hashfn }, Buffer.alloc(32)))
 }
 
 // a straigth rip from python interop w/go ecies implementation
@@ -79,7 +81,7 @@ export class ECIES {
 
     this._nonce = crypto.randomBytes(32)
     this._ephemeralPrivateKey = genPrivateKey()
-    this._ephemeralPublicKey = Buffer.from(publicKeyCreate(this._ephemeralPrivateKey, false))
+    this._ephemeralPublicKey = Buffer.from(getPublicKey(this._ephemeralPrivateKey, false))
   }
 
   _encryptMessage(data: Buffer, sharedMacData: Buffer | null = null): Buffer | undefined {
@@ -105,7 +107,7 @@ export class ECIES {
       .update(Buffer.concat([dataIV, sharedMacData]))
       .digest()
 
-    const publicKey = publicKeyCreate(privateKey, false)
+    const publicKey = getPublicKey(privateKey, false)
     return Buffer.concat([publicKey, dataIV, tag])
   }
 
@@ -180,7 +182,7 @@ export class ECIES {
       Buffer.from([0x04]),
     ]
 
-    const dataRLP = rlp.encode(data)
+    const dataRLP = Buffer.from(RLP.encode(bufArrToArr(data)))
     const pad = crypto.randomBytes(100 + Math.floor(Math.random() * 151)) // Random padding between 100, 250
     const authMsg = Buffer.concat([dataRLP, pad])
     const overheadLength = 113
@@ -269,7 +271,7 @@ export class ECIES {
   createAckEIP8(): Buffer | undefined {
     const data = [pk2id(this._ephemeralPublicKey), this._nonce, Buffer.from([0x04])]
 
-    const dataRLP = rlp.encode(data)
+    const dataRLP = Buffer.from(RLP.encode(bufArrToArr(data)))
     const pad = crypto.randomBytes(100 + Math.floor(Math.random() * 151)) // Random padding between 100, 250
     const ackMsg = Buffer.concat([dataRLP, pad])
     const overheadLength = 113
@@ -331,7 +333,8 @@ export class ECIES {
 
   createHeader(size: number): Buffer | undefined {
     const bufSize = zfill(int2buffer(size), 3)
-    let header = Buffer.concat([bufSize, rlp.encode([0, 0])]) // TODO: the rlp will contain something else someday
+    const headerData = Buffer.from(RLP.encode([0, 0])) // [capability-id, context-id] (currently unused in spec)
+    let header = Buffer.concat([bufSize, headerData])
     header = zfill(header, 16, false)
     if (!this._egressAes) return
     header = this._egressAes.update(header)

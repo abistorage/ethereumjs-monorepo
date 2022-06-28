@@ -1,5 +1,5 @@
 import { middleware } from '../validation'
-import { addHexPrefix } from 'ethereumjs-util'
+import { addHexPrefix } from '@ethereumjs/util'
 import type { EthereumClient } from '../..'
 import type { Chain } from '../../blockchain'
 import type { PeerPool } from '../../net/peerpool'
@@ -34,7 +34,7 @@ export class Net {
    * @param params An empty array
    */
   version(_params = []) {
-    return this._chain.config.chainCommon.chainIdBN().toString()
+    return this._chain.config.chainCommon.chainId().toString()
   }
 
   /**

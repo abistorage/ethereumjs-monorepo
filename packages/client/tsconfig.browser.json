@@ -1,9 +1,8 @@
 {
-  "extends": "../../config/tsconfig.browser.json",
+  "extends": "../../config/tsconfig.json",
   "include": ["browser/index.ts"],
   "exclude": ["lib/index.js"],
   "compilerOptions": {
-    "target": "ES2017",
     "outDir": "dist.browser",
     "typeRoots": ["node_modules/@types", "lib/@types"],
   }

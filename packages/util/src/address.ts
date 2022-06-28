@@ -1,6 +1,4 @@
-import assert from 'assert'
-import { BN } from './externals'
-import { toBuffer, zeros } from './bytes'
+import { toBuffer, zeros, bigIntToBuffer, bufferToBigInt } from './bytes'
 import {
   isValidAddress,
   pubToAddress,
@@ -13,7 +11,9 @@ export class Address {
   public readonly buf: Buffer
 
   constructor(buf: Buffer) {
-    assert(buf.length === 20, 'Invalid address length')
+    if (buf.length !== 20) {
+      throw new Error('Invalid address length')
+    }
     this.buf = buf
   }
 
@@ -29,7 +29,9 @@ export class Address {
    * @param str - Hex-encoded address
    */
   static fromString(str: string): Address {
-    assert(isValidAddress(str), 'Invalid address')
+    if (!isValidAddress(str)) {
+      throw new Error('Invalid address')
+    }
     return new Address(toBuffer(str))
   }
 
@@ -38,7 +40,9 @@ export class Address {
    * @param pubKey The two points of an uncompressed key
    */
   static fromPublicKey(pubKey: Buffer): Address {
-    assert(Buffer.isBuffer(pubKey), 'Public key should be Buffer')
+    if (!Buffer.isBuffer(pubKey)) {
+      throw new Error('Public key should be Buffer')
+    }
     const buf = pubToAddress(pubKey)
     return new Address(buf)
   }
@@ -48,7 +52,9 @@ export class Address {
    * @param privateKey A private key must be 256 bits wide
    */
   static fromPrivateKey(privateKey: Buffer): Address {
-    assert(Buffer.isBuffer(privateKey), 'Private key should be Buffer')
+    if (!Buffer.isBuffer(privateKey)) {
+      throw new Error('Private key should be Buffer')
+    }
     const buf = privateToAddress(privateKey)
     return new Address(buf)
   }
@@ -58,9 +64,11 @@ export class Address {
    * @param from The address which is creating this new address
    * @param nonce The nonce of the from account
    */
-  static generate(from: Address, nonce: BN): Address {
-    assert(BN.isBN(nonce))
-    return new Address(generateAddress(from.buf, nonce.toArrayLike(Buffer)))
+  static generate(from: Address, nonce: bigint): Address {
+    if (typeof nonce !== 'bigint') {
+      throw new Error('Expected nonce to be a bigint')
+    }
+    return new Address(generateAddress(from.buf, bigIntToBuffer(nonce)))
   }
 
   /**
@@ -70,8 +78,12 @@ export class Address {
    * @param initCode The init code of the contract being created
    */
   static generate2(from: Address, salt: Buffer, initCode: Buffer): Address {
-    assert(Buffer.isBuffer(salt))
-    assert(Buffer.isBuffer(initCode))
+    if (!Buffer.isBuffer(salt)) {
+      throw new Error('Expected salt to be a Buffer')
+    }
+    if (!Buffer.isBuffer(initCode)) {
+      throw new Error('Expected initCode to be a Buffer')
+    }
     return new Address(generateAddress2(from.buf, salt, initCode))
   }
 
@@ -94,11 +106,10 @@ export class Address {
    * by EIP-1352
    */
   isPrecompileOrSystemAddress(): boolean {
-    const addressBN = new BN(this.buf)
-    const rangeMin = new BN(0)
-    const rangeMax = new BN('ffff', 'hex')
-
-    return addressBN.gte(rangeMin) && addressBN.lte(rangeMax)
+    const address = bufferToBigInt(this.buf)
+    const rangeMin = BigInt(0)
+    const rangeMax = BigInt('0xffff')
+    return address >= rangeMin && address <= rangeMax
   }
 
   /**

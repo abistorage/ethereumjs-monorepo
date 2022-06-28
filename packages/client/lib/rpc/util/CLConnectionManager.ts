@@ -160,7 +160,8 @@ export class CLConnectionManager {
   }
 
   private timeDiffStr(block: Block) {
-    return timeDiff(block.header.timestamp.toNumber())
+    const timeDiffStr = timeDiff(Number(block.header.timestamp))
+    return timeDiffStr
   }
 
   lastForkchoiceUpdate(update: ForkchoiceUpdate) {

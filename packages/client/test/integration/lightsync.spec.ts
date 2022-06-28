@@ -1,4 +1,4 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Event } from '../../lib/types'
 import { wait, setup, destroy } from './util'
 import { SyncMode } from '../../lib/config'
@@ -18,7 +18,7 @@ tape('[Integration:LightSync]', async (t) => {
     await localService.synchronizer.stop()
     await localServer.discover('remotePeer1', '127.0.0.2')
     localService.config.events.on(Event.SYNC_SYNCHRONIZED, async () => {
-      t.equals(localService.chain.headers.height.toNumber(), 20, 'synced')
+      t.equals(localService.chain.headers.height, BigInt(20), 'synced')
       await destroy(localServer, localService)
       await destroy(remoteServer, remoteService)
     })
@@ -66,7 +66,7 @@ tape('[Integration:LightSync]', async (t) => {
     await localServer.discover('remotePeer1', '127.0.0.2')
     await localServer.discover('remotePeer2', '127.0.0.3')
     localService.config.events.on(Event.SYNC_SYNCHRONIZED, async () => {
-      if (localService.chain.headers.height.toNumber() === 10) {
+      if (localService.chain.headers.height === BigInt(10)) {
         t.pass('synced with best peer')
         await destroy(localServer, localService)
         await destroy(remoteServer1, remoteService1)

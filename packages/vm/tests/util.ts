@@ -1,4 +1,4 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Block, BlockHeader, BlockOptions } from '@ethereumjs/block'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import {
@@ -7,15 +7,21 @@ import {
   Transaction,
   TxOptions,
 } from '@ethereumjs/tx'
+import { keccak256 } from 'ethereum-cryptography/keccak'
+import { bytesToHex } from 'ethereum-cryptography/utils'
 import {
   Account,
-  BN,
-  rlp,
-  keccak256,
-  stripHexPrefix,
+  Address,
+  bigIntToBuffer,
+  bufferToBigInt,
+  bufferToHex,
+  isHexPrefixed,
   setLengthLeft,
+  stripHexPrefix,
   toBuffer,
-} from 'ethereumjs-util'
+} from '@ethereumjs/util'
+import RLP from 'rlp'
+import { VmState } from '../src/eei/vmState'
 
 export function dumpState(state: any, cb: Function) {
   function readAccounts(state: any) {
@@ -57,14 +63,14 @@ export function dumpState(state: any, cb: Function) {
       results.push(result)
     }
     for (let i = 0; i < results.length; i++) {
-      console.log("SHA3'd address: " + <string>results[i].address.toString('hex'))
-      console.log('\tstate root: ' + <string>results[i].stateRoot.toString('hex'))
+      console.log("SHA3'd address: " + bufferToHex(results[i].address))
+      console.log('\tstate root: ' + bufferToHex(results[i].stateRoot))
       console.log('\tstorage: ')
       for (const storageKey in results[i].storage) {
-        console.log('\t\t' + storageKey + ': ' + <string>results[i].storage[storageKey])
+        console.log('\t\t' + storageKey + ': ' + results[i].storage[storageKey])
       }
-      console.log('\tnonce: ' + new BN(results[i].nonce).toString())
-      console.log('\tbalance: ' + new BN(results[i].balance).toString())
+      console.log('\tnonce: ' + BigInt(results[i].nonce))
+      console.log('\tbalance: ' + BigInt(results[i].balance))
     }
     cb()
   })
@@ -75,14 +81,18 @@ export function format(a: any, toZero: boolean = false, isHex: boolean = false):
     return Buffer.alloc(0)
   }
 
-  if (a.slice && a.slice(0, 2) === '0x') {
+  if (typeof a === 'string' && isHexPrefixed(a)) {
     a = a.slice(2)
-    if (a.length % 2) a = '0' + <string>a
+    if (a.length % 2) a = '0' + a
     a = Buffer.from(a, 'hex')
   } else if (!isHex) {
-    a = Buffer.from(new BN(a).toArray())
+    try {
+      a = bigIntToBuffer(BigInt(a))
+    } catch {
+      // pass
+    }
   } else {
-    if (a.length % 2) a = '0' + <string>a
+    if (a.length % 2) a = '0' + a
     a = Buffer.from(a, 'hex')
   }
 
@@ -123,7 +133,7 @@ export async function verifyPostConditions(state: any, testData: any, t: tape.Te
     const keyMap: any = {}
 
     for (const key in testData) {
-      const hash = keccak256(Buffer.from(stripHexPrefix(key), 'hex')).toString('hex')
+      const hash = bytesToHex(keccak256(Buffer.from(stripHexPrefix(key), 'hex')))
       hashedAccounts[hash] = testData[key]
       keyMap[hash] = key
     }
@@ -176,12 +186,16 @@ export function verifyAccountPostConditions(
     t.comment('Account: ' + address)
     if (!format(account.balance, true).equals(format(acctData.balance, true))) {
       t.comment(
-        `Expected balance of ${new BN(format(acctData.balance, true))}, but got ${account.balance}`
+        `Expected balance of ${bufferToBigInt(format(acctData.balance, true))}, but got ${
+          account.balance
+        }`
       )
     }
     if (!format(account.nonce, true).equals(format(acctData.nonce, true))) {
       t.comment(
-        `Expected nonce of ${new BN(format(acctData.nonce, true))}, but got ${account.nonce}`
+        `Expected nonce of ${bufferToBigInt(format(acctData.nonce, true))}, but got ${
+          account.nonce
+        }`
       )
     }
 
@@ -190,16 +204,15 @@ export function verifyAccountPostConditions(
 
     const hashedStorage: any = {}
     for (const key in acctData.storage) {
-      hashedStorage[
-        keccak256(setLengthLeft(Buffer.from(key.slice(2), 'hex'), 32)).toString('hex')
-      ] = acctData.storage[key]
+      hashedStorage[bytesToHex(keccak256(setLengthLeft(Buffer.from(key.slice(2), 'hex'), 32)))] =
+        acctData.storage[key]
     }
 
     state.root = account.stateRoot
     const rs = state.createReadStream()
     rs.on('data', function (data: any) {
       let key = data.key.toString('hex')
-      const val = '0x' + rlp.decode(data.value).toString('hex')
+      const val = '0x' + Buffer.from(RLP.decode(data.value) as Uint8Array).toString('hex')
 
       if (key === '0x') {
         key = '0x00'
@@ -245,11 +258,11 @@ export function verifyGas(results: any, testData: any, t: tape.Test) {
     return
   }
 
-  const postBal = new BN(testData.post[coinbaseAddr].balance)
-  const balance = postBal.sub(preBal)
-  if (!balance.isZero()) {
-    const amountSpent = results.gasUsed.mul(testData.transaction.gasPrice)
-    t.ok(amountSpent.eq(balance), 'correct gas')
+  const postBal = BigInt(testData.post[coinbaseAddr].balance)
+  const balance = postBal - preBal
+  if (balance !== BigInt(0)) {
+    const amountSpent = results.gasUsed * testData.transaction.gasPrice
+    t.equal(amountSpent, balance, 'correct gas')
   } else {
     t.equal(results, undefined)
   }
@@ -257,7 +270,7 @@ export function verifyGas(results: any, testData: any, t: tape.Test) {
 
 /**
  * verifyLogs
- * @param logs  to verify
+ * @param logs to verify
  * @param testData from tests repo
  */
 export function verifyLogs(logs: any, testData: any, t: tape.Test) {
@@ -265,7 +278,7 @@ export function verifyLogs(logs: any, testData: any, t: tape.Test) {
     testData.logs.forEach(function (log: any, i: number) {
       const rlog = logs[i]
       t.equal(rlog[0].toString('hex'), log.address, 'log: valid address')
-      t.equal('0x' + <string>rlog[2].toString('hex'), log.data, 'log: valid data')
+      t.equal(bufferToHex(rlog[2]), log.data, 'log: valid data')
       log.topics.forEach(function (topic: string, i: number) {
         t.equal(rlog[1][i].toString('hex'), topic, 'log: invalid topic')
       })
@@ -314,44 +327,44 @@ export function makeBlockFromEnv(env: any, opts?: BlockOptions): Block {
  * @param state - the state DB/trie
  * @param testData - JSON from tests repo
  */
-export async function setupPreConditions(state: any, testData: any) {
+export async function setupPreConditions(state: VmState, testData: any) {
   await state.checkpoint()
-  for (const address of Object.keys(testData.pre)) {
-    const { nonce, balance, code, storage } = testData.pre[address]
+  for (const addressStr of Object.keys(testData.pre)) {
+    const { nonce, balance, code, storage } = testData.pre[addressStr]
 
-    const addressBuf = format(address)
+    const addressBuf = format(addressStr)
+    const address = new Address(addressBuf)
+
     const codeBuf = format(code)
     const codeHash = keccak256(codeBuf)
 
-    const storageTrie = state.copy(false)
-    storageTrie.root = null
-
     // Set contract storage
     for (const storageKey of Object.keys(storage)) {
-      const valBN = new BN(format(storage[storageKey]), 16)
-      if (valBN.isZero()) {
+      const val = format(storage[storageKey])
+      if (['', '00'].includes(val.toString('hex'))) {
         continue
       }
-      const val = rlp.encode(valBN.toArrayLike(Buffer, 'be'))
       const key = setLengthLeft(format(storageKey), 32)
-
-      await storageTrie.put(key, val)
-    }
-
-    const stateRoot = storageTrie.root
-
-    if (testData.exec && testData.exec.address === address) {
-      testData.root = storageTrie.root
+      await state.putContractStorage(address, key, val)
     }
 
     // Put contract code
-    await state.db.put(codeHash, codeBuf)
+    await state.putContractCode(address, codeBuf)
+
+    const stateRoot = (await state.getAccount(address)).stateRoot
+
+    if (testData.exec && testData.exec.address === addressStr) {
+      testData.root = stateRoot
+    }
 
     // Put account data
     const account = Account.fromAccountData({ nonce, balance, codeHash, stateRoot })
-    await state.put(addressBuf, account.serialize())
+    await state.putAccount(address, account)
   }
   await state.commit()
+  // Clear the touched stack, otherwise untouched accounts in the block which are empty (>= SpuriousDragon)
+  // will get deleted from the state, resulting in state trie errors
+  ;(<any>state)._touched.clear()
 }
 
 /**
@@ -401,12 +414,14 @@ export function getDAOCommon(activationBlock: number) {
       editedForks.push(fork)
     }
   }
-  const DAOCommon = Common.forCustomChain(
-    'mainnet',
+  const DAOCommon = Common.custom(
     {
       hardforks: editedForks,
     },
-    Hardfork.Dao
+    {
+      baseChain: 'mainnet',
+      hardfork: Hardfork.Dao,
+    }
   )
   return DAOCommon
 }

@@ -1,8 +1,9 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Block } from '@ethereumjs/block'
 import Blockchain from '@ethereumjs/blockchain'
+import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { Transaction } from '@ethereumjs/tx'
-import { Address, BN } from 'ethereumjs-util'
+import { Address } from '@ethereumjs/util'
 import { INVALID_PARAMS } from '../../../lib/rpc/error-code'
 import { startRPC, createManager, createClient, params, baseRequest } from '../helpers'
 import { checkError } from '../util'
@@ -10,17 +11,19 @@ import type { FullEthereumService } from '../../../lib/service'
 
 const method = 'eth_getCode'
 
-tape(`${method}: call with valid arguments`, async (t) => {
-  const blockchain = await Blockchain.create()
+const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
 
-  const client = createClient({ blockchain, includeVM: true })
+tape(`${method}: call with valid arguments`, async (t) => {
+  const blockchain = await Blockchain.create({ common })
+
+  const client = createClient({ blockchain, commonChain: common, includeVM: true })
   const manager = createManager(client)
   const server = startRPC(manager.getMethods())
 
   const { execution } = client.services.find((s) => s.name === 'eth') as FullEthereumService
   t.notEqual(execution, undefined, 'should have valid execution')
   const { vm } = execution
-  await vm.stateManager.generateCanonicalGenesis()
+  await vm.eei.state.generateCanonicalGenesis(blockchain.genesisState())
 
   // genesis address
   const address = Address.fromString('0xccfd725760a68823ff1e062f4cc97e1360e8d997')
@@ -35,9 +38,13 @@ tape(`${method}: call with valid arguments`, async (t) => {
 })
 
 tape(`${method}: ensure returns correct code`, async (t) => {
-  const blockchain = await Blockchain.create({ validateBlocks: false, validateConsensus: false })
+  const blockchain = await Blockchain.create({
+    common,
+    validateBlocks: false,
+    validateConsensus: false,
+  })
 
-  const client = createClient({ blockchain, includeVM: true })
+  const client = createClient({ blockchain, commonChain: common, includeVM: true })
   const manager = createManager(client)
   const server = startRPC(manager.getMethods())
 
@@ -56,11 +63,11 @@ tape(`${method}: ensure returns correct code`, async (t) => {
 
   // construct block with tx
   const gasLimit = 2000000
-  const tx = Transaction.fromTxData({ gasLimit, data }, { freeze: false })
+  const tx = Transaction.fromTxData({ gasLimit, data }, { common, freeze: false })
   tx.getSenderAddress = () => {
     return address
   }
-  const parent = await blockchain.getLatestHeader()
+  const parent = await blockchain.getCanonicalHeadHeader()
   const block = Block.fromBlockData(
     {
       header: {
@@ -69,7 +76,7 @@ tape(`${method}: ensure returns correct code`, async (t) => {
         gasLimit,
       },
     },
-    { calcDifficultyFromHeader: parent }
+    { common, calcDifficultyFromHeader: parent }
   )
   block.transactions[0] = tx
 
@@ -80,7 +87,7 @@ tape(`${method}: ensure returns correct code`, async (t) => {
   const { createdAddress } = result.results[0]
   await vm.blockchain.putBlock(ranBlock!)
 
-  const expectedContractAddress = Address.generate(address, new BN(0))
+  const expectedContractAddress = Address.generate(address, BigInt(0))
   t.ok(
     createdAddress!.equals(expectedContractAddress),
     'should match the expected contract address'

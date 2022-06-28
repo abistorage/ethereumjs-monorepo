@@ -42,7 +42,7 @@ const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.London })
 
 If no hardfork is provided, the common is initialized with the default hardfork.
 
-Current `DEFAULT_HARDFORK`: `istanbul`
+Current `DEFAULT_HARDFORK`: `london`
 
 Here are some simple usage examples:
 
@@ -55,27 +55,12 @@ c.param('gasPrices', 'ecAddGas') // 500
 c = new Common({ chain: 'ropsten', hardfork: 'byzantium' })
 c.param('pow', 'minerReward') // 3000000000000000000
 
-// Access genesis data for Ropsten network
-c.genesis().hash // 0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d
-
 // Get bootstrap nodes for chain/network
 c.bootstrapNodes() // Array with current nodes
 
 // Instantiate with an EIP activated
 c = new Common({ chain: 'mainnet', eips: [2537] })
 ```
-
-If the initializing library only supports a certain range of `hardforks` you can use the `supportedHardforks` option to restrict hardfork access on the `Common` instance:
-
-```typescript
-const c = new Common({
-  chain: 'ropsten',
-  supportedHardforks: ['byzantium', 'constantinople', 'petersburg'],
-})
-```
-
-This will throw an error when a param is requested for an unsupported hardfork
-to prevent unpredictable behavior.
 
 For an improved developer experience, there are `Chain` and `Hardfork` enums available:
 
@@ -214,47 +199,7 @@ const common1 = new Common({
 })
 ```
 
-It is also possible (`v2.5.0`+) to pass in a custom genesis state file (see e.g. `src/genesisStates/goerli.json` for an example on the format needed) along with the custom chain configuration:
-
-```typescript
-import myCustomChain1 from '[PATH_TO_MY_CHAINS]/myCustomChain1.json'
-import chain1GenesisState from '[PATH_TO_GENESIS_STATES]/chain1GenesisState.json'
-const common = new Common({
-  chain: 'myCustomChain1',
-  customChains: [[myCustomChain1, chain1GenesisState]],
-})
-```
-
-A more complex example with genesis state with Contract and EoA states would have the following format:
-
-```typescript
-const complexState = {
-  // For EoA
-  '0x0...01': '0x100',
-  // For contracts
-  '0x0...02': [
-    '0x1',
-    '0xRUNTIME_BYTECODE',
-    [
-      [key1, value1],
-      [key2, value2],
-    ],
-  ],
-}
-import myCustomChain1 from '[PATH_TO_MY_CHAINS]/myCustomChain1.json'
-const common = new Common({
-  chain: 'myCustomChain1',
-  customChains: [[myCustomChain1, complexState]],
-})
-```
-
-Accessing the genesis state can be done as follows:
-
-```typescript
-const genesisState = common.genesisState()
-```
-
-This now also provides direct access to custom genesis states passed into `Common` as described above. The old Common-separate `genesisStateByName()` and `genesisStateById()` functions are now `deprecated` and usage should be avoided.
+Custom genesis states should be passed to the `@ethereumjs/blockchain` directly.
 
 ## Hardforks
 
@@ -288,10 +233,10 @@ library supported:
 - `byzantium` (`Hardfork.Byzantium`)
 - `constantinople` (`Hardfork.Constantinople`)
 - `petersburg` (`Hardfork.Petersburg`) (aka `constantinopleFix`, apply together with `constantinople`)
-- `istanbul` (`Hardfork.Istanbul`) (`DEFAULT_HARDFORK` (`v2.0.0` release series))
+- `istanbul` (`Hardfork.Instanbul`)
 - `muirGlacier` (`Hardfork.MuirGlacier`)
 - `berlin` (`Hardfork.Berlin`) (since `v2.2.0`)
-- `london` (`Hardfork.London`) (since `v2.4.0`)
+- `london` (`Hardfork.London`) (`DEFAULT_HARDFORK`) (since `v2.4.0`)
 - `merge` (`Hardfork.Merge`) (since `v2.5.0`, `experimental`)
 
 ### Future Hardforks

@@ -1,10 +1,14 @@
-import tape from 'tape'
-import td from 'testdouble'
+import * as tape from 'tape'
+import * as td from 'testdouble'
 import Common, { Chain as CommonChain, Hardfork } from '@ethereumjs/common'
 import { FeeMarketEIP1559Transaction, Transaction } from '@ethereumjs/tx'
 import { Block, BlockHeader } from '@ethereumjs/block'
-import { DefaultStateManager, StateManager } from '@ethereumjs/vm/dist/state'
-import { Account, Address, BN, keccak256 } from 'ethereumjs-util'
+import { Address } from '@ethereumjs/util'
+import { keccak256 } from 'ethereum-cryptography/keccak'
+import { CliqueConsensus } from '@ethereumjs/blockchain'
+import VM from '@ethereumjs/vm'
+import { VmState } from '@ethereumjs/vm/dist/eei/vmState'
+
 import { Config } from '../../lib/config'
 import { FullEthereumService } from '../../lib/service'
 import { Chain } from '../../lib/blockchain'
@@ -29,21 +33,20 @@ const B = {
   ),
 }
 
-const setBalance = async (stateManager: StateManager, address: Address, balance: BN) => {
-  // this fn can be replaced with modifyAccountFields() when #1369 is available
-  await stateManager.checkpoint()
-  await stateManager.putAccount(address, new Account(new BN(0), balance))
-  await stateManager.commit()
+const setBalance = async (vm: VM, address: Address, balance: bigint) => {
+  await vm.eei.state.checkpoint()
+  await vm.eei.state.modifyAccountFields(address, { balance })
+  await vm.eei.state.commit()
 }
 
 tape('[Miner]', async (t) => {
-  const originalValidate = BlockHeader.prototype.validate
-  BlockHeader.prototype.validate = td.func<any>()
+  const originalValidate = BlockHeader.prototype._consensusFormatValidation
+  BlockHeader.prototype._consensusFormatValidation = td.func<any>()
   td.replace('@ethereumjs/block', { BlockHeader })
 
-  const originalSetStateRoot = DefaultStateManager.prototype.setStateRoot
-  DefaultStateManager.prototype.setStateRoot = td.func<any>()
-  td.replace('@ethereumjs/vm/dist/state', { DefaultStateManager })
+  const originalSetStateRoot = VmState.prototype.setStateRoot
+  VmState.prototype.setStateRoot = td.func<any>()
+  td.replace('@ethereumjs/vm/dist/vmState', { VmState })
 
   class FakeChain {
     open() {}
@@ -52,25 +55,30 @@ tape('[Miner]', async (t) => {
     get headers() {
       return {
         latest: BlockHeader.fromHeaderData(),
-        height: new BN(0),
+        height: BigInt(0),
       }
     }
     get blocks() {
       return {
         latest: Block.fromBlockData(),
-        height: new BN(0),
+        height: BigInt(0),
       }
     }
-    getLatestHeader() {
+    getCanonicalHeadHeader() {
       return BlockHeader.fromHeaderData()
     }
     blockchain: any = {
       putBlock: async () => {},
-      cliqueActiveSigners: () => [A.address],
-      cliqueSignerInTurn: async () => true,
-      cliqueCheckRecentlySigned: () => false,
+      consensus: {
+        cliqueActiveSigners: () => [A.address],
+        cliqueSignerInTurn: async () => true,
+        cliqueCheckRecentlySigned: () => false,
+        validateDifficulty: () => undefined,
+      },
+      validateHeader: () => {},
       // eslint-disable-next-line no-invalid-this
       copy: () => this.blockchain,
+      _init: async () => undefined,
     }
   }
 
@@ -152,13 +160,13 @@ tape('[Miner]', async (t) => {
     txPool.start()
     miner.start()
 
-    await setBalance(vm.stateManager, A.address, new BN('200000000000001'))
+    await setBalance(vm, A.address, BigInt('200000000000001'))
 
     // add tx
     await txPool.add(txA01)
 
     // disable consensus to skip PoA block signer validation
-    ;(vm.blockchain as any)._validateConsensus = false
+    ;(vm.blockchain.consensus as CliqueConsensus).cliqueActiveSigners = () => [A.address] // stub
 
     chain.putBlocks = (blocks: Block[]) => {
       t.equal(blocks[0].transactions.length, 1, 'new block should include tx')
@@ -184,8 +192,8 @@ tape('[Miner]', async (t) => {
       txPool.start()
       miner.start()
 
-      await setBalance(vm.stateManager, A.address, new BN('400000000000001'))
-      await setBalance(vm.stateManager, B.address, new BN('400000000000001'))
+      await setBalance(vm, A.address, BigInt('400000000000001'))
+      await setBalance(vm, B.address, BigInt('400000000000001'))
 
       // add txs
       await txPool.add(txA01)
@@ -213,7 +221,10 @@ tape('[Miner]', async (t) => {
   t.test('assembleBlocks() -> should not include tx under the baseFee', async (t) => {
     t.plan(1)
     const customChainParams = { hardforks: [{ name: 'london', block: 0 }] }
-    const common = Common.forCustomChain(CommonChain.Rinkeby, customChainParams, Hardfork.London)
+    const common = Common.custom(customChainParams, {
+      baseChain: CommonChain.Rinkeby,
+      hardfork: Hardfork.London,
+    })
     const config = new Config({ transports: [], accounts, mine: true, common })
     const chain = new FakeChain() as any
     const block = Block.fromBlockData({}, { common })
@@ -243,7 +254,11 @@ tape('[Miner]', async (t) => {
       { to: B.address, maxFeePerGas: 6 },
       { common }
     ).sign(A.privateKey)
-    await txPool.add(tx, true)
+    try {
+      await txPool.add(tx, true)
+    } catch {
+      t.fail('txPool should throw trying to add a tx with an invalid maxFeePerGas')
+    }
 
     // disable consensus to skip PoA block signer validation
     ;(vm.blockchain as any)._validateConsensus = false
@@ -264,12 +279,12 @@ tape('[Miner]', async (t) => {
     const block = Block.fromBlockData({ header: { gasLimit } }, { common })
     Object.defineProperty(chain, 'headers', {
       get: function () {
-        return { latest: block.header, height: new BN(0) }
+        return { latest: block.header, height: BigInt(0) }
       },
     })
     Object.defineProperty(chain, 'blocks', {
       get: function () {
-        return { latest: block, height: new BN(0) }
+        return { latest: block, height: BigInt(0) }
       },
     })
     const service = new FullEthereumService({
@@ -282,16 +297,16 @@ tape('[Miner]', async (t) => {
     txPool.start()
     miner.start()
 
-    await setBalance(vm.stateManager, A.address, new BN('200000000000001'))
+    await setBalance(vm, A.address, BigInt('200000000000001'))
 
     // add txs
     const data = '0xfe' // INVALID opcode, consumes all gas
     const tx1FillsBlockGasLimit = Transaction.fromTxData(
-      { gasLimit: gasLimit - 1, data, gasPrice: new BN(1000000000) },
+      { gasLimit: gasLimit - 1, data, gasPrice: BigInt('1000000000') },
       { common }
     ).sign(A.privateKey)
     const tx2ExceedsBlockGasLimit = Transaction.fromTxData(
-      { gasLimit: 21000, to: B.address, nonce: 1, gasPrice: new BN(1000000000) },
+      { gasLimit: 21000, to: B.address, nonce: 1, gasPrice: BigInt('1000000000') },
       { common }
     ).sign(A.privateKey)
     await txPool.add(tx1FillsBlockGasLimit)
@@ -328,16 +343,18 @@ tape('[Miner]', async (t) => {
     txPool.start()
     miner.start()
 
+    await setBalance(vm, A.address, BigInt('200000000000001'))
+
     // add many txs to slow assembling
-    let privateKey = keccak256(Buffer.from(''))
+    let privateKey = Buffer.from(keccak256(Buffer.from('')))
     for (let i = 0; i < 1000; i++) {
       // In order not to pollute TxPool with too many txs from the same address
       // (or txs which are already known), keep generating a new address for each tx
       const address = Address.fromPrivateKey(privateKey)
-      await setBalance(vm.stateManager, address, new BN('200000000000001'))
+      await setBalance(vm, address, BigInt('200000000000001'))
       const tx = createTx({ address, privateKey })
       await txPool.add(tx)
-      privateKey = keccak256(privateKey)
+      privateKey = Buffer.from(keccak256(privateKey))
     }
 
     chain.putBlocks = () => {
@@ -373,7 +390,8 @@ tape('[Miner]', async (t) => {
     const miner = new Miner({ config, service })
 
     const { vm } = service.execution
-    vm.blockchain.cliqueActiveSigners = () => [A.address] // stub
+    ;(vm.blockchain.consensus as CliqueConsensus).cliqueActiveSigners = () => [A.address] // stub
+    vm.blockchain.validateHeader = td.func<any>() // stub
     ;(miner as any).chainUpdated = async () => {} // stub
     miner.start()
     await wait(100)
@@ -394,39 +412,40 @@ tape('[Miner]', async (t) => {
     await wait(100)
     config.execCommon.setHardforkByBlockNumber(2)
     t.equal(config.execCommon.hardfork(), Hardfork.Berlin)
-    const blockHeader2 = await chain.getLatestHeader()
+    const blockHeader2 = await chain.getCanonicalHeadHeader()
 
     // block 3: london
     await (miner as any).queueNextAssembly(0)
     await wait(100)
-    const blockHeader3 = await chain.getLatestHeader()
+    const blockHeader3 = await chain.getCanonicalHeadHeader()
     config.execCommon.setHardforkByBlockNumber(3)
     t.equal(config.execCommon.hardfork(), Hardfork.London)
-    t.ok(
-      blockHeader2.gasLimit.muln(2).eq(blockHeader3.gasLimit),
+    t.equal(
+      blockHeader2.gasLimit * BigInt(2),
+      blockHeader3.gasLimit,
       'gas limit should be double previous block'
     )
-    const initialBaseFee = new BN(config.execCommon.paramByEIP('gasConfig', 'initialBaseFee', 1559))
-    t.ok(blockHeader3.baseFeePerGas!.eq(initialBaseFee), 'baseFee should be initial value')
+    const initialBaseFee = config.execCommon.paramByEIP('gasConfig', 'initialBaseFee', 1559)!
+    t.equal(blockHeader3.baseFeePerGas!, initialBaseFee, 'baseFee should be initial value')
 
     // block 4
     await (miner as any).queueNextAssembly(0)
     await wait(100)
-    const blockHeader4 = await chain.getLatestHeader()
+    const blockHeader4 = await chain.getCanonicalHeadHeader()
     config.execCommon.setHardforkByBlockNumber(4)
     t.equal(config.execCommon.hardfork(), Hardfork.London)
-    t.ok(
-      blockHeader4.baseFeePerGas!.eq(blockHeader3.calcNextBaseFee()),
+    t.equal(
+      blockHeader4.baseFeePerGas!,
+      blockHeader3.calcNextBaseFee(),
       'baseFee should be as calculated'
     )
-    t.ok((await chain.getLatestHeader()).number.eqn(4))
+    t.ok((await chain.getCanonicalHeadHeader()).number === BigInt(4))
     miner.stop()
     await chain.close()
   })
 
   t.test('should handle mining ethash PoW', async (t) => {
-    t.plan(1)
-    const common = new Common({ chain: CommonChain.Ropsten })
+    const common = new Common({ chain: CommonChain.Ropsten, hardfork: Hardfork.Istanbul })
     ;(common as any)._chainParams['genesis'].difficulty = 1
     const config = new Config({ transports: [], accounts, mine: true, common })
     const chain = new Chain({ config })
@@ -439,14 +458,15 @@ tape('[Miner]', async (t) => {
     ;(chain.blockchain as any)._validateConsensus = false
     ;(miner as any).chainUpdated = async () => {} // stub
     miner.start()
-    await wait(100)
+    await wait(1000)
     config.events.on(Event.CHAIN_UPDATED, async () => {
-      t.ok(chain.blocks.latest!.header.number.eqn(1))
+      t.equal(chain.blocks.latest!.header.number, BigInt(1))
       miner.stop()
       await chain.close()
+      t.end()
     })
     await (miner as any).queueNextAssembly(0)
-    await wait(3000)
+    await wait(10000)
   })
 
   t.test('should reset td', (t) => {
@@ -454,8 +474,8 @@ tape('[Miner]', async (t) => {
     // according to https://github.com/testdouble/testdouble.js/issues/379#issuecomment-415868424
     // mocking indirect dependencies is not properly supported, but it works for us in this file,
     // so we will replace the original functions to avoid issues in other tests that come after
-    BlockHeader.prototype.validate = originalValidate
-    DefaultStateManager.prototype.setStateRoot = originalSetStateRoot
+    BlockHeader.prototype._consensusFormatValidation = originalValidate
+    VmState.prototype.setStateRoot = originalSetStateRoot
     t.end()
   })
 })

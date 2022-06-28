@@ -1,4 +1,4 @@
-module.exports = function(config) {
+module.exports = function (config) {
   config.set({
     browserNoActivityTimeout: 60000,
     frameworks: ['karma-typescript', 'tap'],
@@ -10,6 +10,14 @@ module.exports = function(config) {
       tsconfig: './tsconfig.json',
       bundlerOptions: {
         entrypoints: /\.spec\.ts$/,
+        acornOptions: {
+          ecmaVersion: 11,
+        },
+        resolve: {
+          alias: {
+            'bigint-crypto-utils': '../../node_modules/bigint-crypto-utils/dist/bundles/umd.js',
+          },
+        },
       },
     },
     concurrency: 1,

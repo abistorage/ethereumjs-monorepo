@@ -1,13 +1,14 @@
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import {
   Address,
-  BN,
   bufferToHex,
   MAX_INTEGER,
   MAX_UINT64,
+  SECP256K1_ORDER_DIV_2,
   privateToAddress,
-} from 'ethereumjs-util'
-import tape from 'tape'
+  bufferToBigInt,
+} from '@ethereumjs/util'
+import * as tape from 'tape'
 import {
   AccessList,
   AccessListEIP2930Transaction,
@@ -17,11 +18,6 @@ import {
 
 const pKey = Buffer.from('4646464646464646464646464646464646464646464646464646464646464646', 'hex')
 const address = privateToAddress(pKey)
-
-const N_DIV_2_PLUS_1 = new BN(
-  '7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a1',
-  16
-)
 
 const common = new Common({
   chain: Chain.Mainnet,
@@ -43,7 +39,7 @@ const txTypes = [
 
 const validAddress = Buffer.from('01'.repeat(20), 'hex')
 const validSlot = Buffer.from('01'.repeat(32), 'hex')
-const chainId = new BN(1)
+const chainId = BigInt(1)
 
 tape(
   '[AccessListEIP2930Transaction / FeeMarketEIP1559Transaction] -> EIP-2930 Compatibility',
@@ -57,7 +53,7 @@ tape(
           chainId: 5,
         })
         t.ok(
-          tx.common.chainIdBN().eqn(5),
+          tx.common.chainId() === BigInt(5),
           'should initialize Common with chain ID provided (supported chain ID)'
         )
 
@@ -65,7 +61,7 @@ tape(
           chainId: 99999,
         })
         t.ok(
-          tx.common.chainIdBN().eqn(99999),
+          tx.common.chainId() === BigInt(99999),
           'should initialize Common with chain ID provided (unsupported chain ID)'
         )
 
@@ -77,7 +73,7 @@ tape(
         t.throws(() => {
           txType.class.fromTxData(
             {
-              chainId: chainId.addn(1),
+              chainId: chainId + BigInt(1),
             },
             { common }
           )
@@ -103,7 +99,7 @@ tape(
         '0xaa.1',
         -10.1,
         -1,
-        new BN(-10),
+        BigInt(-10),
         '-100',
         '-10.1',
         '-0xaa',
@@ -119,7 +115,12 @@ tape(
       for (const value of values) {
         const txData: any = {}
         for (const testCase of cases) {
-          if (!(value === 'chainId' && (isNaN(<number>testCase) || testCase === false))) {
+          if (
+            !(
+              value === 'chainId' &&
+              ((typeof testCase === 'number' && isNaN(<number>testCase)) || testCase === false)
+            )
+          ) {
             txData[value] = testCase
             st.throws(() => {
               AccessListEIP2930Transaction.fromTxData(txData)
@@ -262,7 +263,7 @@ tape(
       st.end()
     })
 
-    t.test('sign() / senderS(), senderR(), yParity()', function (t) {
+    t.test('sign()', function (t) {
       for (const txType of txTypes) {
         let tx = txType.class.fromTxData(
           {
@@ -280,10 +281,6 @@ tape(
 
         tx = txType.class.fromTxData({}, { common })
         signed = tx.sign(pKey)
-
-        t.deepEqual(signed.senderR, signed.r, `should provide senderR() alias (${txType.name})`)
-        t.deepEqual(signed.senderS, signed.s, `should provide senderS() alias (${txType.name})`)
-        t.deepEqual(signed.yParity, signed.v, `should provide yParity() alias (${txType.name})`)
 
         t.deepEqual(
           tx.accessList,
@@ -303,7 +300,8 @@ tape(
         })
 
         t.throws(() => {
-          const tx = txType.class.fromTxData({ s: N_DIV_2_PLUS_1, r: 1, v: 1 }, { common })
+          const high = SECP256K1_ORDER_DIV_2 + BigInt(1)
+          const tx = txType.class.fromTxData({ s: high, r: 1, v: 1 }, { common })
           const signed = tx.sign(pKey)
           signed.getSenderPublicKey()
         }, `should throw with invalid s value (${txType.name})`)
@@ -314,15 +312,15 @@ tape(
     t.test('getDataFee()', function (st) {
       for (const txType of txTypes) {
         let tx = txType.class.fromTxData({}, { common })
-        st.ok(tx.getDataFee().toNumber() === 0, 'Should return data fee when frozen')
+        st.equal(tx.getDataFee(), BigInt(0), 'Should return data fee when frozen')
 
         tx = txType.class.fromTxData({}, { common, freeze: false })
-        st.ok(tx.getDataFee().toNumber() === 0, 'Should return data fee when not frozen')
+        st.equal(tx.getDataFee(), BigInt(0), 'Should return data fee when not frozen')
 
         const mutableCommon = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.London })
         tx = txType.class.fromTxData({}, { common: mutableCommon })
         tx.common.setHardfork(Hardfork.Istanbul)
-        st.ok(tx.getDataFee().toNumber() === 0, 'Should invalidate cached value on hardfork change')
+        st.equal(tx.getDataFee(), BigInt(0), 'Should invalidate cached value on hardfork change')
       }
       st.end()
     })
@@ -339,7 +337,7 @@ tape('[AccessListEIP2930Transaction] -> Class Specific Tests', function (t) {
 
     const validAddress = Buffer.from('01'.repeat(20), 'hex')
     const validSlot = Buffer.from('01'.repeat(32), 'hex')
-    const chainId = new BN(1)
+    const chainId = BigInt(1)
     try {
       AccessListEIP2930Transaction.fromTxData(
         {
@@ -384,17 +382,18 @@ tape('[AccessListEIP2930Transaction] -> Class Specific Tests', function (t) {
     )
     // Cost should be:
     // Base fee + 2*TxDataNonZero + TxDataZero + AccessListAddressCost + AccessListSlotCost
-    const txDataZero: number = common.param('gasPrices', 'txDataZero')
-    const txDataNonZero: number = common.param('gasPrices', 'txDataNonZero')
-    const accessListStorageKeyCost: number = common.param('gasPrices', 'accessListStorageKeyCost')
-    const accessListAddressCost: number = common.param('gasPrices', 'accessListAddressCost')
-    const baseFee: number = common.param('gasPrices', 'tx')
-    const creationFee: number = common.param('gasPrices', 'txCreation')
+    const txDataZero: number = Number(common.param('gasPrices', 'txDataZero'))
+    const txDataNonZero: number = Number(common.param('gasPrices', 'txDataNonZero'))
+    const accessListStorageKeyCost: number = Number(
+      common.param('gasPrices', 'accessListStorageKeyCost')
+    )
+    const accessListAddressCost: number = Number(common.param('gasPrices', 'accessListAddressCost'))
+    const baseFee: number = Number(common.param('gasPrices', 'tx'))
+    const creationFee: number = Number(common.param('gasPrices', 'txCreation'))
 
     st.ok(
-      tx
-        .getBaseFee()
-        .eqn(
+      tx.getBaseFee() ===
+        BigInt(
           txDataNonZero * 2 +
             txDataZero +
             baseFee +
@@ -414,9 +413,8 @@ tape('[AccessListEIP2930Transaction] -> Class Specific Tests', function (t) {
     )
 
     st.ok(
-      tx
-        .getBaseFee()
-        .eqn(
+      tx.getBaseFee() ===
+        BigInt(
           txDataNonZero * 2 +
             txDataZero +
             creationFee +
@@ -439,7 +437,9 @@ tape('[AccessListEIP2930Transaction] -> Class Specific Tests', function (t) {
       { common }
     )
 
-    st.ok(tx.getBaseFee().eqn(baseFee + accessListAddressCost * 2 + accessListStorageKeyCost * 3))
+    st.ok(
+      tx.getBaseFee() === BigInt(baseFee + accessListAddressCost * 2 + accessListStorageKeyCost * 3)
+    )
 
     st.end()
   })
@@ -453,7 +453,7 @@ tape('[AccessListEIP2930Transaction] -> Class Specific Tests', function (t) {
       },
       { common }
     )
-    st.equals(tx.getUpfrontCost().toNumber(), 10000000042)
+    st.equal(tx.getUpfrontCost(), BigInt(10000000042))
     st.end()
   })
 
@@ -502,7 +502,7 @@ tape('[AccessListEIP2930Transaction] -> Class Specific Tests', function (t) {
       nonce: 0x00,
       to: new Address(Buffer.from('df0a88b2b68c673713a8ec826003676f272e3573', 'hex')),
       value: 0x01,
-      chainId: new BN(Buffer.from('796f6c6f763378', 'hex')),
+      chainId: bufferToBigInt(Buffer.from('796f6c6f763378', 'hex')),
       accessList: <any>[[address, [slot1]]],
     }
 
@@ -511,7 +511,10 @@ tape('[AccessListEIP2930Transaction] -> Class Specific Tests', function (t) {
       chainId: txData.chainId,
       eips: [2718, 2929, 2930],
     }
-    const usedCommon = Common.forCustomChain('mainnet', customChainParams, 'berlin')
+    const usedCommon = Common.custom(customChainParams, {
+      baseChain: Chain.Mainnet,
+      hardfork: Hardfork.Berlin,
+    })
     usedCommon.setEIPs([2718, 2929, 2930])
 
     const expectedUnsignedRaw = Buffer.from(
@@ -530,11 +533,11 @@ tape('[AccessListEIP2930Transaction] -> Class Specific Tests', function (t) {
       'bbd570a3c6acc9bb7da0d5c0322fe4ea2a300db80226f7df4fef39b2d6649eec',
       'hex'
     )
-    const v = new BN(0)
-    const r = new BN(
+    const v = BigInt(0)
+    const r = bufferToBigInt(
       Buffer.from('294ac94077b35057971e6b4b06dfdf55a6fbed819133a6c1d31e187f1bca938d', 'hex')
     )
-    const s = new BN(
+    const s = bufferToBigInt(
       Buffer.from('0be950468ba1c25a5cb50e9f6d8aa13c8cd21f24ba909402775b262ac76d374d', 'hex')
     )
 
@@ -546,9 +549,9 @@ tape('[AccessListEIP2930Transaction] -> Class Specific Tests', function (t) {
 
     const signed = unsignedTx.sign(pkey)
 
-    t.ok(v.eq(signed.v!), 'v correct')
-    t.ok(r.eq(signed.r!), 'r correct')
-    t.ok(s.eq(signed.s!), 's correct')
+    t.ok(v === signed.v!, 'v correct')
+    t.ok(r === signed.r!, 'r correct')
+    t.ok(s === signed.s!, 's correct')
     t.ok(expectedSigned.equals(signed.serialize()), 'serialized signed message correct')
     t.ok(expectedHash.equals(signed.hash()), 'hash correct')
 

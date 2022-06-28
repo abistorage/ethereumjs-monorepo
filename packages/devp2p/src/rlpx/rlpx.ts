@@ -1,11 +1,11 @@
 import * as net from 'net'
 import * as os from 'os'
-import ms from 'ms'
-import { publicKeyCreate } from 'secp256k1'
+import ms = require('ms')
+import { getPublicKey } from 'ethereum-cryptography/secp256k1'
 import { EventEmitter } from 'events'
 import { debug as createDebugLogger, Debugger } from 'debug'
 import { devp2pDebug } from '../util'
-import LRUCache from 'lru-cache'
+import * as LRUCache from 'lru-cache'
 import Common from '@ethereumjs/common'
 // note: relative path only valid in .js file in dist
 const { version: pVersion } = require('../../package.json')
@@ -54,7 +54,7 @@ export class RLPx extends EventEmitter {
     super()
 
     this._privateKey = Buffer.from(privateKey)
-    this._id = pk2id(Buffer.from(publicKeyCreate(this._privateKey, false)))
+    this._id = pk2id(Buffer.from(getPublicKey(this._privateKey, false)))
 
     // options
     this._timeout = options.timeout ?? ms('10s')

@@ -1,9 +1,9 @@
-import tape from 'tape'
-import { toBuffer } from 'ethereumjs-util'
-import { CheckpointTrie } from '../src'
+import * as tape from 'tape'
+import { toBuffer } from '@ethereumjs/util'
+import { CheckpointTrie, LevelDB } from '../src'
 
-const trie = new CheckpointTrie()
-const trie2 = new CheckpointTrie()
+const trie = new CheckpointTrie({ db: new LevelDB() })
+const trie2 = new CheckpointTrie({ db: new LevelDB() })
 const hex = 'FF44A3B3'
 
 tape('encoding hex prefixes', async function (t) {

@@ -1,7 +1,6 @@
 import { Block } from '@ethereumjs/block'
 import { Transaction } from '@ethereumjs/tx'
-import { BN } from 'ethereumjs-util'
-import tape from 'tape'
+import * as tape from 'tape'
 import { INVALID_PARAMS } from '../../../lib/rpc/error-code'
 import { startRPC, createManager, createClient, params, baseRequest, dummy } from '../helpers'
 import { checkError } from '../util'
@@ -23,7 +22,7 @@ function createChain() {
   const genesisBlock = {
     hash: () => genesisBlockHash,
     header: {
-      number: new BN(0),
+      number: BigInt(0),
     },
     toJSON: () => ({ ...Block.fromBlockData({ header: { number: 0 } }).toJSON(), transactions }),
     transactions,
@@ -32,7 +31,7 @@ function createChain() {
   const block = {
     hash: () => blockHash,
     header: {
-      number: new BN(1),
+      number: BigInt(1),
       hash: () => blockHash,
     },
     toJSON: () => ({
@@ -45,9 +44,9 @@ function createChain() {
   return {
     blocks: { latest: block },
     getBlock: () => genesisBlock,
-    getLatestBlock: () => block,
-    getLatestHeader: () => block.header,
-    getTd: () => new BN(0),
+    getCanonicalHeadBlock: () => block,
+    getCanonicalHeadHeader: () => block.header,
+    getTd: () => BigInt(0),
   }
 }
 

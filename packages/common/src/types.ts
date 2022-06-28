@@ -1,80 +1,57 @@
-import { BN, PrefixedHexString } from 'ethereumjs-util'
-import { ConsensusAlgorithm, ConsensusType, Hardfork as HardforkName } from '.'
+import { ConsensusAlgorithm, ConsensusType, Hardfork, Chain } from './enums'
 
-export interface genesisStatesType {
-  names: {
-    [key: string]: string
-  }
-  [key: string]: {}
+export interface ChainName {
+  [chainId: string]: string
+}
+export interface ChainsConfig {
+  [key: string]: ChainConfig | ChainName
 }
 
-export interface chainsType {
-  names: {
-    [key: string]: string
-  }
-  [key: string]: any
+export type CliqueConfig = {
+  period: number
+  epoch: number
 }
 
-export interface Chain {
+export type EthashConfig = {}
+
+export type CasperConfig = {}
+export interface ChainConfig {
   name: string
-  chainId: number | BN
-  networkId: number | BN
-  // TODO: make mandatory in next breaking release
-  defaultHardfork?: string
+  chainId: number | bigint
+  networkId: number | bigint
+  defaultHardfork: string
   comment: string
   url: string
-  genesis: GenesisBlock
-  hardforks: Hardfork[]
-  bootstrapNodes: BootstrapNode[]
+  genesis: GenesisBlockConfig
+  hardforks: HardforkConfig[]
+  bootstrapNodes: BootstrapNodeConfig[]
   dnsNetworks?: string[]
-  // TODO: make mandatory in next breaking release
-  consensus?: {
+  consensus: {
     type: ConsensusType | string
     algorithm: ConsensusAlgorithm | string
-    clique?: {
-      period: number
-      epoch: number
-    }
-    ethash?: any
-    casper?: any
+    clique?: CliqueConfig
+    ethash?: EthashConfig
+    casper?: CasperConfig
   }
 }
 
-type StoragePair = [key: PrefixedHexString, value: PrefixedHexString]
-
-export type AccountState = [
-  balance: PrefixedHexString,
-  code: PrefixedHexString,
-  storage: Array<StoragePair>
-]
-
-export interface GenesisState {
-  [key: PrefixedHexString]: PrefixedHexString | AccountState
-}
-
-export interface eipsType {
-  [key: number]: any
-}
-
-export interface GenesisBlock {
-  hash: string
-  timestamp: string | null
+export interface GenesisBlockConfig {
+  timestamp?: string
   gasLimit: number
   difficulty: number
   nonce: string
   extraData: string
-  stateRoot: string
   baseFeePerGas?: string
 }
 
-export interface Hardfork {
-  name: HardforkName | string
+export interface HardforkConfig {
+  name: Hardfork | string
   block: number | null
   td?: number
   forkHash?: string | null
 }
 
-export interface BootstrapNode {
+export interface BootstrapNodeConfig {
   ip: string
   port: number | string
   network?: string
@@ -82,4 +59,57 @@ export interface BootstrapNode {
   id: string
   location: string
   comment: string
+}
+
+interface BaseOpts {
+  /**
+   * String identifier ('byzantium') for hardfork or {@link Hardfork} enum.
+   *
+   * Default: Hardfork.London
+   */
+  hardfork?: string | Hardfork
+  /**
+   * Selected EIPs which can be activated, please use an array for instantiation
+   * (e.g. `eips: [ 2537, ]`)
+   *
+   * Currently supported:
+   *
+   * - [EIP-2537](https://eips.ethereum.org/EIPS/eip-2537) - BLS12-381 precompiles
+   */
+  eips?: number[]
+}
+
+/**
+ * Options for instantiating a {@link Common} instance.
+ */
+export interface CommonOpts extends BaseOpts {
+  /**
+   * Chain name ('mainnet'), id (1), or {@link Chain} enum,
+   * either from a chain directly supported or a custom chain
+   * passed in via {@link CommonOpts.customChains}.
+   */
+  chain: string | number | Chain | bigint | object
+  /**
+   * Initialize (in addition to the supported chains) with the selected
+   * custom chains. Custom genesis state should be passed to the Blockchain class if used.
+   *
+   * Usage (directly with the respective chain initialization via the {@link CommonOpts.chain} option):
+   *
+   * ```javascript
+   * import myCustomChain1 from '[PATH_TO_MY_CHAINS]/myCustomChain1.json'
+   * const common = new Common({ chain: 'myCustomChain1', customChains: [ myCustomChain1 ]})
+   * ```
+   */
+  customChains?: ChainConfig[]
+}
+
+/**
+ * Options to be used with the {@link Common.custom} static constructor.
+ */
+export interface CustomCommonOpts extends BaseOpts {
+  /**
+   * The name (`mainnet`), id (`1`), or {@link Chain} enum of
+   * a standard chain used to base the custom chain params on.
+   */
+  baseChain?: string | number | Chain | bigint
 }

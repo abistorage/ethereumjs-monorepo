@@ -1,7 +1,7 @@
-import { exit } from 'process'
-import path from 'path'
-import tape from 'tape'
-import minimist from 'minimist'
+import * as process from 'process'
+import * as path from 'path'
+import * as tape from 'tape'
+import * as minimist from 'minimist'
 import Common from '@ethereumjs/common'
 import {
   getCommon,
@@ -55,7 +55,7 @@ async function runTests() {
     runner = blockchainTestsRunner
   } else {
     console.log(`Test type not supported or provided`)
-    exit(1)
+    process.exit(1)
   }
 
   const FORK_CONFIG: string = argv.fork || DEFAULT_FORK_CONFIG
@@ -221,18 +221,16 @@ async function runTests() {
       }
 
       for (const failingTestIdentifier in failingTests) {
-        console.log('Errors thrown in ' + failingTestIdentifier + ':')
+        console.log(`Errors thrown in ${failingTestIdentifier}:`)
         const errors = failingTests[failingTestIdentifier]
         for (let i = 0; i < errors.length; i++) {
-          console.log('\t' + <string>errors[i])
+          console.log('\t' + errors[i])
         }
       }
 
-      if (expectedTests != undefined) {
-        t.ok(
-          (t as any).assertCount >= expectedTests,
-          'expected ' + expectedTests.toString() + ' checks, got ' + <string>(t as any).assertCount
-        )
+      if (expectedTests !== undefined) {
+        const { assertCount } = t as any
+        t.ok(assertCount >= expectedTests, `expected ${expectedTests} checks, got ${assertCount}`)
       }
 
       t.end()

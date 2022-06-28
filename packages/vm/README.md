@@ -16,7 +16,6 @@
 # USAGE
 
 ```typescript
-import { BN } from 'ethereumjs-util'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import VM from '@ethereumjs/vm'
 
@@ -30,15 +29,16 @@ const PUSH1 = '60'
 // Note that numbers added are hex values, so '20' would be '32' as decimal e.g.
 const code = [PUSH1, '03', PUSH1, '05', ADD, STOP]
 
-vm.on('step', function (data) {
+vm.evm.on('step', function (data) {
   // Note that data.stack is not immutable, i.e. it is a reference to the vm's internal stack object
   console.log(`Opcode: ${data.opcode.name}\tStack: ${data.stack}`)
 })
 
-vm.runCode({
-  code: Buffer.from(code.join(''), 'hex'),
-  gasLimit: new BN(0xffff),
-})
+vm.evm
+  .runCode({
+    code: Buffer.from(code.join(''), 'hex'),
+    gasLimit: BigInt(0xffff),
+  })
   .then((results) => {
     console.log(`Returned: ${results.returnValue.toString('hex')}`)
     console.log(`gasUsed : ${results.gasUsed.toString()}`)
@@ -63,11 +63,9 @@ All of the examples have their own `README.md` explaining how to run them.
 
 For documentation on `VM` instantiation, exposed API and emitted `events` see generated [API docs](./docs/README.md).
 
-## StateManager
+## VmState
 
-Documentation on the `StateManager` can be found [here](./docs/classes/_state_statemanager_.defaultstatemanager.md). If you want to provide your own `StateManager` you can implement the dedicated [interface](./docs/interfaces/_state_interface_.statemanager.md) to ensure that your implementation conforms with the current API.
-
-Note: along the `EIP-2929` (Gas cost increases for state access opcodes) implementation released in `v5.2.0` a new `EIP2929StateManager` interface has been introduced inheriting from the base `StateManager` interface. The methods introduced there will be merged into the base state manager on the next breaking release.
+The VmState is the wrapper class that manages the context around the underlying state while executing the VM like `EIP-2929`(Gas cost increases for state access opcodes). A Custom implementation of the `StateManager` can be plugged in the VmState
 
 # BROWSER
 
@@ -119,7 +117,7 @@ Currently the following hardfork rules are supported:
 - `london` (`v5.4.0`+)
 - `arrowGlacier` (only `mainnet`) (`v5.6.0`+)
 
-Default: `istanbul` (taken from `Common.DEFAULT_HARDFORK`)
+Default: `london` (taken from `Common.DEFAULT_HARDFORK`)
 
 A specific hardfork VM ruleset can be activated by passing in the hardfork
 along the `Common` instance:

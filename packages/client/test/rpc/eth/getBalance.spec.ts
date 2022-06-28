@@ -1,8 +1,9 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Block } from '@ethereumjs/block'
 import Blockchain from '@ethereumjs/blockchain'
+import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { Transaction } from '@ethereumjs/tx'
-import { Address, BN, toBuffer, bnToHex } from 'ethereumjs-util'
+import { Address, bigIntToHex } from '@ethereumjs/util'
 import { INVALID_PARAMS } from '../../../lib/rpc/error-code'
 import { startRPC, createManager, createClient, params, baseRequest } from '../helpers'
 import { checkError } from '../util'
@@ -11,9 +12,10 @@ import type { FullEthereumService } from '../../../lib/service'
 const method = 'eth_getBalance'
 
 tape(`${method}: ensure balance deducts after a tx`, async (t) => {
-  const blockchain = await Blockchain.create()
+  const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
+  const blockchain = await Blockchain.create({ common })
 
-  const client = createClient({ blockchain, includeVM: true })
+  const client = createClient({ blockchain, commonChain: common, includeVM: true })
   const manager = createManager(client)
 
   const server = startRPC(manager.getMethods())
@@ -24,37 +26,37 @@ tape(`${method}: ensure balance deducts after a tx`, async (t) => {
 
   // since synchronizer.run() is not executed in the mock setup,
   // manually run stateManager.generateCanonicalGenesis()
-  await vm.stateManager.generateCanonicalGenesis()
+  await vm.eei.state.generateCanonicalGenesis(blockchain.genesisState())
 
   // genesis address with balance
   const address = Address.fromString('0xccfd725760a68823ff1e062f4cc97e1360e8d997')
 
   // verify balance is genesis amount
-  const genesisBalance = new BN(toBuffer('0x15ac56edc4d12c0000'))
+  const genesisBalance = BigInt(0x15ac56edc4d12c0000)
   let req = params(method, [address.toString(), 'latest'])
   let expectRes = (res: any) => {
     const msg = 'should return the correct genesis balance'
-    t.equal(res.body.result, bnToHex(genesisBalance), msg)
+    t.equal(res.body.result, bigIntToHex(genesisBalance), msg)
   }
   await baseRequest(t, server, req, 200, expectRes, false)
 
   // construct block with tx
-  const tx = Transaction.fromTxData({ gasLimit: 53000 }, { freeze: false })
+  const tx = Transaction.fromTxData({ gasLimit: 53000 }, { common, freeze: false })
   tx.getSenderAddress = () => {
     return address
   }
-  const block = Block.fromBlockData()
+  const block = Block.fromBlockData({}, { common })
   block.transactions[0] = tx
 
   const result = await vm.runBlock({ block, generate: true, skipBlockValidation: true })
   const { amountSpent } = result.results[0]
 
   // verify balance is genesis amount minus amountSpent
-  const expectedNewBalance = genesisBalance.sub(amountSpent)
+  const expectedNewBalance = genesisBalance - amountSpent
   req = params(method, [address.toString(), 'latest'])
   expectRes = (res: any) => {
     const msg = 'should return the correct balance after a tx'
-    t.equal(res.body.result, bnToHex(expectedNewBalance), msg)
+    t.equal(res.body.result, bigIntToHex(expectedNewBalance), msg)
   }
   await baseRequest(t, server, req, 200, expectRes, false)
 
@@ -62,7 +64,7 @@ tape(`${method}: ensure balance deducts after a tx`, async (t) => {
   req = params(method, [address.toString(), 'earliest'])
   expectRes = (res: any) => {
     const msg = "should return the correct balance with 'earliest'"
-    t.equal(res.body.result, bnToHex(genesisBalance), msg)
+    t.equal(res.body.result, bigIntToHex(genesisBalance), msg)
   }
   await baseRequest(t, server, req, 200, expectRes, false)
 
@@ -70,7 +72,7 @@ tape(`${method}: ensure balance deducts after a tx`, async (t) => {
   req = params(method, [address.toString(), '0x0'])
   expectRes = (res: any) => {
     const msg = 'should return the correct balance with a past block number'
-    t.equal(res.body.result, bnToHex(genesisBalance), msg)
+    t.equal(res.body.result, bigIntToHex(genesisBalance), msg)
   }
   await baseRequest(t, server, req, 200, expectRes, false)
 

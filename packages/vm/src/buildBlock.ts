@@ -1,72 +1,19 @@
-import { Address, BN, toBuffer, rlp } from 'ethereumjs-util'
-import { BaseTrie as Trie } from 'merkle-patricia-tree'
-import { Block, BlockOptions, HeaderData } from '@ethereumjs/block'
+import { Address, toBuffer, toType, TypeOutput } from '@ethereumjs/util'
+import { Trie } from '@ethereumjs/trie'
+import RLP from 'rlp'
+import { Block, HeaderData } from '@ethereumjs/block'
 import { ConsensusType } from '@ethereumjs/common'
 import { TypedTransaction } from '@ethereumjs/tx'
-import VM from '.'
-import Bloom from './bloom'
-import { RunTxResult } from './runTx'
+import { VM } from './vm'
+import { Bloom } from './bloom'
 import { calculateMinerReward, rewardAccount, encodeReceipt } from './runBlock'
-
-/**
- * Options for the block builder.
- */
-export interface BuilderOpts extends BlockOptions {
-  /**
-   * Whether to put the block into the vm's blockchain after building it.
-   * This is useful for completing a full cycle when building a block so
-   * the only next step is to build again, however it may not be desired
-   * if the block is being emulated or may be discarded as to not affect
-   * the underlying blockchain.
-   *
-   * Default: true
-   */
-  putBlockIntoBlockchain?: boolean
-}
-
-/**
- * Options for building a block.
- */
-export interface BuildBlockOpts {
-  /**
-   * The parent block
-   */
-  parentBlock: Block
-
-  /**
-   * The block header data to use.
-   * Defaults used for any values not provided.
-   */
-  headerData?: HeaderData
-
-  /**
-   * The block and builder options to use.
-   */
-  blockOpts?: BuilderOpts
-}
-
-/**
- * Options for sealing a block.
- */
-export interface SealBlockOpts {
-  /**
-   * For PoW, the nonce.
-   * Overrides the value passed in the constructor.
-   */
-  nonce?: Buffer
-
-  /**
-   * For PoW, the mixHash.
-   * Overrides the value passed in the constructor.
-   */
-  mixHash?: Buffer
-}
+import { BuildBlockOpts, BuilderOpts, SealBlockOpts, RunTxResult } from './types'
 
 export class BlockBuilder {
   /**
    * The cumulative gas used by the transactions added to the block.
    */
-  gasUsed = new BN(0)
+  gasUsed = BigInt(0)
 
   private readonly vm: VM
   private blockOpts: BuilderOpts
@@ -88,7 +35,7 @@ export class BlockBuilder {
     this.headerData = {
       ...opts.headerData,
       parentHash: opts.headerData?.parentHash ?? opts.parentBlock.hash(),
-      number: opts.headerData?.number ?? opts.parentBlock.header.number.addn(1),
+      number: opts.headerData?.number ?? opts.parentBlock.header.number + BigInt(1),
       gasLimit: opts.headerData?.gasLimit ?? opts.parentBlock.header.gasLimit,
     }
 
@@ -115,7 +62,7 @@ export class BlockBuilder {
   private async transactionsTrie() {
     const trie = new Trie()
     for (const [i, tx] of this.transactions.entries()) {
-      await trie.put(rlp.encode(i), tx.serialize())
+      await trie.put(Buffer.from(RLP.encode(i)), tx.serialize())
     }
     return trie.root
   }
@@ -136,13 +83,11 @@ export class BlockBuilder {
    * Calculates and returns the receiptTrie for the block.
    */
   private async receiptTrie() {
-    const gasUsed = new BN(0)
     const receiptTrie = new Trie()
     for (const [i, txResult] of this.transactionResults.entries()) {
       const tx = this.transactions[i]
-      gasUsed.iadd(txResult.gasUsed)
-      const encodedReceipt = encodeReceipt(tx, txResult.receipt)
-      await receiptTrie.put(rlp.encode(i), encodedReceipt)
+      const encodedReceipt = encodeReceipt(txResult.receipt, tx.type)
+      await receiptTrie.put(Buffer.from(RLP.encode(i)), encodedReceipt)
     }
     return receiptTrie.root
   }
@@ -151,12 +96,12 @@ export class BlockBuilder {
    * Adds the block miner reward to the coinbase account.
    */
   private async rewardMiner() {
-    const minerReward = new BN(this.vm._common.param('pow', 'minerReward'))
+    const minerReward = this.vm._common.param('pow', 'minerReward')
     const reward = calculateMinerReward(minerReward, 0)
     const coinbase = this.headerData.coinbase
       ? new Address(toBuffer(this.headerData.coinbase))
       : Address.zero()
-    await rewardAccount(this.vm.stateManager, coinbase, reward)
+    await rewardAccount(this.vm.eei.state, coinbase, reward)
   }
 
   /**
@@ -175,9 +120,9 @@ export class BlockBuilder {
 
     // According to the Yellow Paper, a transaction's gas limit
     // cannot be greater than the remaining gas in the block
-    const blockGasLimit = new BN(toBuffer(this.headerData.gasLimit))
-    const blockGasRemaining = blockGasLimit.sub(this.gasUsed)
-    if (tx.gasLimit.gt(blockGasRemaining)) {
+    const blockGasLimit = toType(this.headerData.gasLimit, TypeOutput.BigInt)
+    const blockGasRemaining = blockGasLimit - this.gasUsed
+    if (tx.gasLimit > blockGasRemaining) {
       throw new Error('tx has a higher gas limit than the remaining gas in the block')
     }
 
@@ -192,7 +137,7 @@ export class BlockBuilder {
 
     this.transactions.push(tx)
     this.transactionResults.push(result)
-    this.gasUsed.iadd(result.gasUsed)
+    this.gasUsed += result.totalGasSpent
 
     return result
   }
@@ -228,7 +173,7 @@ export class BlockBuilder {
       await this.rewardMiner()
     }
 
-    const stateRoot = await this.vm.stateManager.getStateRoot(true)
+    const stateRoot = await this.vm.stateManager.getStateRoot()
     const transactionsTrie = await this.transactionsTrie()
     const receiptTrie = await this.receiptTrie()
     const logsBloom = this.logsBloom()

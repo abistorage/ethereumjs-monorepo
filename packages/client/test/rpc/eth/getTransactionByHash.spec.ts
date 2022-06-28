@@ -1,6 +1,6 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Transaction, FeeMarketEIP1559Transaction } from '@ethereumjs/tx'
-import { bufferToHex } from 'ethereumjs-util'
+import { bufferToHex } from '@ethereumjs/util'
 import {
   params,
   baseRequest,
@@ -9,7 +9,7 @@ import {
   gethGenesisStartLondon,
   dummy,
 } from '../helpers'
-import pow from './../../testdata/geth-genesis/pow.json'
+import pow = require('./../../testdata/geth-genesis/pow.json')
 
 const method = 'eth_getTransactionByHash'
 

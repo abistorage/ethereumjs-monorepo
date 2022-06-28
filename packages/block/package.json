@@ -10,16 +10,12 @@
   ],
   "files": [
     "dist",
-    "dist.browser",
     "src"
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "browser": "dist.browser/index.js",
   "scripts": {
-    "build": "npm run build:node && npm run build:browser",
-    "build:node": "../../config/cli/ts-build.sh node",
-    "build:browser": "../../config/cli/ts-build.sh browser",
+    "build": "../../config/cli/ts-build.sh",
     "prepublishOnly": "../../config/cli/prepublish.sh",
     "clean": "../../config/cli/clean-package.sh",
     "coverage": "../../config/cli/coverage.sh",
@@ -34,9 +30,11 @@
   },
   "dependencies": {
     "@ethereumjs/common": "^2.6.4",
-    "merkle-patricia-tree": "^4.2.4",
-    "@ethereumjs/tx": "^3.5.1",
-    "ethereumjs-util": "^7.1.4"
+    "@ethereumjs/trie": "^5.0.0",
+    "@ethereumjs/tx": "^3.5.2",
+    "@ethereumjs/util": "^8.0.0",
+    "ethereum-cryptography": "^1.0.3",
+    "rlp": "^3.0.0"
   },
   "devDependencies": {
     "@types/lru-cache": "^5.1.0",

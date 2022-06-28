@@ -1,5 +1,4 @@
-import tape from 'tape'
-import { BN } from 'ethereumjs-util'
+import * as tape from 'tape'
 import Common, { Chain, ConsensusAlgorithm, ConsensusType, Hardfork } from '../src'
 
 tape('[Common]: Hardfork logic', function (t: tape.Test) {
@@ -73,15 +72,18 @@ tape('[Common]: Hardfork logic', function (t: tape.Test) {
   t.test('hardforkBlock()', function (st: tape.Test) {
     let c = new Common({ chain: Chain.Ropsten })
     let msg = 'should return the correct HF change block for byzantium (provided)'
-    st.equal(c.hardforkBlock(Hardfork.Byzantium), 1700000, msg)
+    st.equal(c.hardforkBlock(Hardfork.Byzantium)!, BigInt(1700000), msg)
+
+    msg = 'should return null if HF does not exist on chain'
+    st.equal(c.hardforkBlock('thisHardforkDoesNotExist'), null, msg)
 
     c = new Common({ chain: Chain.Ropsten, hardfork: Hardfork.Byzantium })
     msg = 'should return the correct HF change block for byzantium (set)'
-    st.equal(c.hardforkBlock(), 1700000, msg)
+    st.equal(c.hardforkBlock()!, BigInt(1700000), msg)
 
     c = new Common({ chain: Chain.Ropsten, hardfork: Hardfork.Istanbul })
     msg = 'should return the correct HF change block for istanbul (set)'
-    st.equal(c.hardforkBlock(), 6485846, msg)
+    st.equal(c.hardforkBlock()!, BigInt(6485846), msg)
 
     st.end()
   })
@@ -108,14 +110,14 @@ tape('[Common]: Hardfork logic', function (t: tape.Test) {
     let c = new Common({ chain: Chain.Rinkeby, hardfork: Hardfork.Chainstart })
     let msg =
       'should work with HF set / return correct next HF block for chainstart (rinkeby: chainstart -> homestead)'
-    st.equal(c.nextHardforkBlock(), 1, msg)
+    st.equal(c.nextHardforkBlock()!, BigInt(1), msg)
 
     msg =
       'should correctly skip a HF where block is set to null (rinkeby: homestead -> (dao) -> tangerineWhistle)'
-    st.equal(c.nextHardforkBlock('homestead'), 2, msg)
+    st.equal(c.nextHardforkBlock('homestead')!, BigInt(2), msg)
 
     msg = 'should return correct next HF (rinkeby: byzantium -> constantinople)'
-    st.equal(c.nextHardforkBlock(Hardfork.Byzantium), 3660663, msg)
+    st.equal(c.nextHardforkBlock(Hardfork.Byzantium)!, BigInt(3660663), msg)
 
     msg = 'should return null if next HF is not available (rinkeby: london -> shanghai)'
     st.equal(c.nextHardforkBlock(Hardfork.London), null, msg)
@@ -123,7 +125,7 @@ tape('[Common]: Hardfork logic', function (t: tape.Test) {
     msg =
       'should work correctly along the need to skip several forks (ropsten: chainstart -> (homestead) -> (dao) -> (tangerineWhistle) -> spuriousDragon)'
     c = new Common({ chain: Chain.Ropsten, hardfork: Hardfork.Chainstart })
-    st.equal(c.nextHardforkBlock(), 10, msg)
+    st.equal(c.nextHardforkBlock()!, BigInt(10), msg)
 
     st.end()
   })
@@ -146,71 +148,6 @@ tape('[Common]: Hardfork logic', function (t: tape.Test) {
 
     msg = 'should return false for a block number too high (rinkeby: byzantium -> constantinople)'
     st.equal(c.isNextHardforkBlock(605948938, Hardfork.Byzantium), false, msg)
-
-    st.end()
-  })
-
-  t.test('activeHardforks()', function (st: tape.Test) {
-    let c = new Common({ chain: Chain.Ropsten })
-    let msg = 'should return correct number of active hardforks for Ropsten'
-    st.equal(c.activeHardforks().length, 11, msg)
-
-    msg = 'should return the correct HF data for Ropsten'
-    st.equal(c.activeHardforks()[3]['name'], Hardfork.SpuriousDragon, msg)
-
-    msg = 'should return 3 active hardforks for Ropsten up to block 9'
-    st.equal(c.activeHardforks(9).length, 3, msg)
-
-    msg = 'should return 4 active hardforks for Ropsten up to block 10'
-    st.equal(c.activeHardforks(10).length, 4, msg)
-
-    c = new Common({
-      chain: Chain.Ropsten,
-      supportedHardforks: [Hardfork.SpuriousDragon, Hardfork.Byzantium, Hardfork.Constantinople],
-    })
-    msg = 'should return 3 active HFs when restricted to supported HFs'
-    st.equal(c.activeHardforks(null, { onlySupported: true }).length, 3, msg)
-
-    c = new Common({
-      chain: Chain.Ropsten,
-      supportedHardforks: [Hardfork.SpuriousDragon, Hardfork.Byzantium, Hardfork.Dao],
-    })
-    msg = 'should return 2 active HFs when restricted to supported HFs'
-    st.equal(c.activeHardforks(null, { onlySupported: true }).length, 2, msg)
-
-    c = new Common({ chain: Chain.Mainnet })
-    msg = 'should return correct number of active HFs for mainnet'
-    st.equal(c.activeHardforks().length, 13, msg)
-
-    c = new Common({ chain: Chain.Rinkeby })
-    msg = 'should return correct number of active HFs for rinkeby'
-    st.equal(c.activeHardforks().length, 10, msg)
-
-    c = new Common({ chain: Chain.Goerli })
-    msg = 'should return correct number of active HFs for goerli'
-    st.equal(c.activeHardforks().length, 10, msg)
-
-    st.end()
-  })
-
-  t.test('activeHardfork()', function (st: tape.Test) {
-    let c = new Common({ chain: Chain.Ropsten })
-    let msg = 'should return correct latest active HF for Ropsten'
-    st.equal(c.activeHardfork(), Hardfork.London, msg)
-
-    msg = 'should return spuriousDragon as latest active HF for Ropsten for block 10'
-    st.equal(c.activeHardfork(10), Hardfork.SpuriousDragon, msg)
-
-    c = new Common({
-      chain: Chain.Ropsten,
-      supportedHardforks: [Hardfork.TangerineWhistle, Hardfork.SpuriousDragon],
-    })
-    msg = 'should return spuriousDragon as latest active HF for Ropsten with limited supported HFs'
-    st.equal(c.activeHardfork(null, { onlySupported: true }), Hardfork.SpuriousDragon, msg)
-
-    c = new Common({ chain: Chain.Rinkeby })
-    msg = 'should return correct latest active HF for Rinkeby'
-    st.equal(c.activeHardfork(), Hardfork.London, msg)
 
     st.end()
   })
@@ -242,19 +179,19 @@ tape('[Common]: Hardfork logic', function (t: tape.Test) {
     st.end()
   })
 
-  t.test('hardforkBlock() / hardforkBlockBN()', function (st: tape.Test) {
+  t.test('hardforkBlock()', function (st: tape.Test) {
     const c = new Common({ chain: Chain.Mainnet })
 
     let msg = 'should return correct value'
-    st.equal(c.hardforkBlock(Hardfork.Berlin), 12244000, msg)
-    st.ok(c.hardforkBlockBN(Hardfork.Berlin)!.eq(new BN(12244000)), msg)
+    st.equal(c.hardforkBlock(Hardfork.Berlin)!, BigInt(12244000), msg)
+    st.equal(c.hardforkBlock(Hardfork.Berlin)!, BigInt(12244000), msg)
 
     msg = 'should return null for unscheduled hardfork'
     // developer note: when Shanghai is set,
     // update this test to next unscheduled hardfork.
     st.equal(c.hardforkBlock(Hardfork.Shanghai), null, msg)
-    st.equal(c.hardforkBlockBN(Hardfork.Shanghai), null, msg)
-    st.equal(c.nextHardforkBlockBN(Hardfork.Shanghai), null, msg)
+    st.equal(c.hardforkBlock(Hardfork.Shanghai), null, msg)
+    st.equal(c.nextHardforkBlock(Hardfork.Shanghai), null, msg)
 
     st.end()
   })
@@ -264,14 +201,8 @@ tape('[Common]: Hardfork logic', function (t: tape.Test) {
     let msg = 'Ropsten, constantinople >= byzantium (provided) -> true'
     st.equal(c.hardforkGteHardfork(Hardfork.Constantinople, Hardfork.Byzantium), true, msg)
 
-    msg = 'Ropsten, dao >= chainstart (provided), onlyActive -> false'
-    st.equal(
-      c.hardforkGteHardfork(Hardfork.Dao, Hardfork.Chainstart, {
-        onlyActive: true,
-      }),
-      false,
-      msg
-    )
+    msg = 'Ropsten, dao >= chainstart (provided) -> false'
+    st.equal(c.hardforkGteHardfork(Hardfork.Dao, Hardfork.Chainstart), false, msg)
 
     msg = 'Ropsten, byzantium >= byzantium (provided) -> true'
     st.equal(c.hardforkGteHardfork(Hardfork.Byzantium, Hardfork.Byzantium), true, msg)
@@ -285,9 +216,6 @@ tape('[Common]: Hardfork logic', function (t: tape.Test) {
 
     msg = 'Ropsten, byzantium (set) >= spuriousDragon -> true (alias function)'
     st.equal(c.gteHardfork(Hardfork.SpuriousDragon), true, msg)
-
-    msg = 'Ropsten, byzantium (set) >= spuriousDragon, onlyActive -> true'
-    st.equal(c.hardforkGteHardfork(null, Hardfork.SpuriousDragon, { onlyActive: true }), true, msg)
 
     msg = 'Ropsten, byzantium (set) >= byzantium -> true'
     st.equal(c.hardforkGteHardfork(null, Hardfork.Byzantium), true, msg)
@@ -306,67 +234,54 @@ tape('[Common]: Hardfork logic', function (t: tape.Test) {
     st.end()
   })
 
-  t.test('hardforkIsActiveOnChain()', function (st: tape.Test) {
-    let c = new Common({ chain: Chain.Ropsten })
-    let msg = 'should return true for byzantium (provided) on Ropsten'
-    st.equal(c.hardforkIsActiveOnChain(Hardfork.Byzantium), true, msg)
-
-    msg = 'should return false for dao (provided) on Ropsten'
-    st.equal(c.hardforkIsActiveOnChain(Hardfork.Dao), false, msg)
-
-    msg = 'should return true for petersburg (provided) on Ropsten'
-    st.equal(c.hardforkIsActiveOnChain(Hardfork.Petersburg), true, msg)
-
-    msg = 'should return false for a non-existing HF (provided) on Ropsten'
-    st.equal(c.hardforkIsActiveOnChain('notexistinghardfork'), false, msg)
-
-    let f = function () {
-      c.hardforkIsActiveOnChain(Hardfork.SpuriousDragon, { onlySupported: true })
-    }
-    msg = 'should not throw with unsupported Hf (provided) and onlySupported set to false'
-    st.doesNotThrow(f, /unsupported hardfork$/, msg)
-
-    c = new Common({ chain: Chain.Ropsten, hardfork: Hardfork.Byzantium })
-    msg = 'should return true for byzantium (set) on Ropsten'
-    st.equal(c.hardforkIsActiveOnChain(), true, msg)
-
-    c = new Common({
-      chain: Chain.Ropsten,
-      supportedHardforks: [Hardfork.Byzantium, Hardfork.Constantinople],
-    })
-    f = function () {
-      c.hardforkIsActiveOnChain(Hardfork.SpuriousDragon, { onlySupported: true })
-    }
-    msg = 'should throw with unsupported Hf and onlySupported set to true'
-    st.throws(f, /not set as supported in supportedHardforks$/, msg)
-
-    st.end()
-  })
-
   t.test('_calcForkHash()', function (st: tape.Test) {
+    const chains: [Chain, Buffer][] = [
+      [
+        Chain.Mainnet,
+        Buffer.from('d4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3', 'hex'),
+      ],
+      [
+        Chain.Ropsten,
+        Buffer.from('41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d', 'hex'),
+      ],
+      [
+        Chain.Rinkeby,
+        Buffer.from('6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177', 'hex'),
+      ],
+      [
+        Chain.Kovan,
+        Buffer.from('a3c565fc15c7478862d50ccd6561e3c06b24cc509bf388941c25ea985ce32cb9', 'hex'),
+      ],
+      [
+        Chain.Goerli,
+        Buffer.from('bf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a', 'hex'),
+      ],
+      [
+        Chain.Sepolia,
+        Buffer.from('25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9', 'hex'),
+      ],
+    ]
+
     let c = new Common({ chain: Chain.Mainnet })
+    const mainnetGenesisHash = chains[0][1]
     let msg = 'should calc correctly for chainstart (only genesis)'
-    st.equal(c._calcForkHash('chainstart'), '0xfc64ec04', msg)
+    st.equal(c._calcForkHash(Hardfork.Chainstart, mainnetGenesisHash), '0xfc64ec04', msg)
 
     msg = 'should calc correctly for first applied HF'
-    st.equal(c._calcForkHash('homestead'), '0x97c2c34c', msg)
+    st.equal(c._calcForkHash(Hardfork.Homestead, mainnetGenesisHash), '0x97c2c34c', msg)
 
     msg = 'should calc correctly for in-between applied HF'
-    st.equal(c._calcForkHash(Hardfork.Byzantium), '0xa00bc324', msg)
+    st.equal(c._calcForkHash(Hardfork.Byzantium, mainnetGenesisHash), '0xa00bc324', msg)
 
-    const chains = ['mainnet', 'ropsten', 'rinkeby', 'goerli', 'kovan']
-
-    chains.forEach((chain) => {
-      c = new Common({ chain: chain })
-
+    for (const [chain, genesisHash] of chains) {
+      c = new Common({ chain })
       for (const hf of c.hardforks()) {
         if (hf.forkHash && hf.forkHash !== null) {
-          const msg = `Verify forkHash calculation for: ${chain} -> ${hf.name}`
-          st.equal(c._calcForkHash(hf.name), hf.forkHash, msg)
+          const msg = `Verify forkHash calculation for: ${Chain[chain]} -> ${hf.name}`
+          st.equal(c._calcForkHash(hf.name, genesisHash), hf.forkHash, msg)
         }
       }
-    })
-
+    }
     st.end()
   })
 
@@ -377,12 +292,23 @@ tape('[Common]: Hardfork logic', function (t: tape.Test) {
 
     msg = 'should provide correct forkHash for HF provided'
     st.equal(c.forkHash(Hardfork.SpuriousDragon), '0x3edd5b10', msg)
+    const genesisHash = Buffer.from(
+      'd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3',
+      'hex'
+    )
+    st.equal(c.forkHash(Hardfork.SpuriousDragon, genesisHash), '0x3edd5b10', msg)
 
     c = new Common({ chain: Chain.Kovan })
-    const f = () => {
+    let f = () => {
       c.forkHash(Hardfork.Merge)
     }
     msg = 'should throw when called on non-applied or future HF'
+    st.throws(f, /No fork hash calculation possible/, msg)
+
+    f = () => {
+      c.forkHash('thisHardforkDoesNotExist')
+    }
+    msg = 'should throw when called with a HF that does not exist on chain'
     st.throws(f, /No fork hash calculation possible/, msg)
 
     st.end()
@@ -392,7 +318,7 @@ tape('[Common]: Hardfork logic', function (t: tape.Test) {
     const c = new Common({ chain: Chain.Mainnet })
 
     let msg = 'should return the correct HF array for a matching forkHash'
-    const res = c.hardforkForForkHash('0x3edd5b10')
+    const res = c.hardforkForForkHash('0x3edd5b10')!
     st.equal(res.name, Hardfork.SpuriousDragon, msg)
 
     msg = 'should return null for a forkHash not matching any HF'

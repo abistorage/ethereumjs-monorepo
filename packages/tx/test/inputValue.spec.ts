@@ -1,13 +1,5 @@
-import tape from 'tape'
-import {
-  Address,
-  AddressLike,
-  BN,
-  BNLike,
-  BufferLike,
-  bufferToHex,
-  toBuffer,
-} from 'ethereumjs-util'
+import * as tape from 'tape'
+import { Address, AddressLike, BigIntLike, BufferLike, toBuffer } from '@ethereumjs/util'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { Transaction } from '../src'
 
@@ -16,9 +8,9 @@ function generateAddressLikeValues(address: string): AddressLike[] {
   return [address, toBuffer(address), new Address(toBuffer(address))]
 }
 
-// @returns: Array with subtypes of the BNLike type for a given number
-function generateBNLikeValues(value: number): BNLike[] {
-  return [value, new BN(value), `0x${value.toString(16)}`, toBuffer(value)]
+// @returns: Array with subtypes of the BigIntLike type for a given number
+function generateBigIntLikeValues(value: number): BigIntLike[] {
+  return [value, BigInt(value), `0x${value.toString(16)}`, toBuffer(value)]
 }
 
 // @returns: Array with subtypes of the BufferLike type for a given string
@@ -85,25 +77,25 @@ function getRandomSubarray<TArrayItem>(array: TArrayItem[], size: number) {
 
 const baseTxValues = {
   data: generateBufferLikeValues('0x65'),
-  gasLimit: generateBNLikeValues(100000),
-  nonce: generateBNLikeValues(0),
+  gasLimit: generateBigIntLikeValues(100000),
+  nonce: generateBigIntLikeValues(0),
   to: generateAddressLikeValues('0x0000000000000000000000000000000000000000'),
-  r: generateBNLikeValues(100),
-  s: generateBNLikeValues(100),
-  value: generateBNLikeValues(10),
+  r: generateBigIntLikeValues(100),
+  s: generateBigIntLikeValues(100),
+  value: generateBigIntLikeValues(10),
 }
 
 const legacyTxValues = {
-  gasPrice: generateBNLikeValues(100),
+  gasPrice: generateBigIntLikeValues(100),
 }
 
 const accessListEip2930TxValues = {
-  chainId: generateBNLikeValues(4),
+  chainId: generateBigIntLikeValues(4),
 }
 
 const eip1559TxValues = {
-  maxFeePerGas: generateBNLikeValues(100),
-  maxPriorityFeePerGas: generateBNLikeValues(50),
+  maxFeePerGas: generateBigIntLikeValues(100),
+  maxPriorityFeePerGas: generateBigIntLikeValues(50),
 }
 
 tape('[Transaction Input Values]', function (t) {
@@ -113,12 +105,10 @@ tape('[Transaction Input Values]', function (t) {
     const legacyTxData = generateCombinations({
       options,
     })
-    const expectedHash = Transaction.fromTxData(legacyTxData[0]).hash()
     const randomSample = getRandomSubarray(legacyTxData, 100)
     for (const txData of randomSample) {
       const tx = Transaction.fromTxData(txData, { common })
-      const hash = tx.hash()
-      st.deepEqual(hash, expectedHash, `correct tx hash (0x${bufferToHex(hash)})`)
+      t.throws(() => tx.hash(), 'tx.hash() throws if tx is unsigned')
     }
     st.end()
   })
@@ -134,14 +124,11 @@ tape('[Transaction Input Values]', function (t) {
     const eip1559TxData = generateCombinations({
       options,
     })
-    const expectedHash = Transaction.fromTxData(eip1559TxData[0]).hash()
     const randomSample = getRandomSubarray(eip1559TxData, 100)
 
     for (const txData of randomSample) {
       const tx = Transaction.fromTxData(txData, { common })
-      const hash = tx.hash()
-
-      st.deepEqual(hash, expectedHash, `correct tx hash (0x${bufferToHex(hash)})`)
+      t.throws(() => tx.hash(), 'tx.hash() should throw if unsigned')
     }
     st.end()
   })

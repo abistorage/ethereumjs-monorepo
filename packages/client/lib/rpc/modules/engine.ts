@@ -1,7 +1,8 @@
 import { Block, HeaderData } from '@ethereumjs/block'
 import { TransactionFactory, TypedTransaction } from '@ethereumjs/tx'
-import { toBuffer, bufferToHex, rlp, BN, zeros } from 'ethereumjs-util'
-import { BaseTrie as Trie } from 'merkle-patricia-tree'
+import { bufferToHex, toBuffer, zeros } from '@ethereumjs/util'
+import RLP from 'rlp'
+import { Trie } from '@ethereumjs/trie'
 import { Hardfork } from '@ethereumjs/common'
 
 import { middleware, validators } from '../validation'
@@ -130,7 +131,7 @@ const recursivelyFindParents = async (vmHeadHash: Buffer, parentHash: Buffer, ch
 const txsTrieRoot = async (txs: TypedTransaction[]) => {
   const trie = new Trie()
   for (const [i, tx] of txs.entries()) {
-    await trie.put(rlp.encode(i), tx.serialize())
+    await trie.put(Buffer.from(RLP.encode(i)), tx.serialize())
   }
   return trie.root
 }
@@ -164,15 +165,15 @@ const validBlock = async (hash: Buffer, chain: Chain): Promise<Block | null> => 
 const validateTerminalBlock = async (block: Block, chain: Chain): Promise<boolean> => {
   const td = chain.config.chainCommon.hardforkTD(Hardfork.Merge)
   if (td === undefined || td === null) return false
-  const ttd = new BN(td)
+  const ttd = BigInt(td)
   const blockTd = await chain.getTd(block.hash(), block.header.number)
 
   // Block is terminal if its td >= ttd and its parent td < ttd.
   // In case the Genesis block has td >= ttd it is the terminal block
-  if (block.isGenesis()) return blockTd.gte(ttd)
+  if (block.isGenesis()) return blockTd >= ttd
 
-  const parentBlockTd = await chain.getTd(block.header.parentHash, block.header.number.subn(1))
-  return blockTd.gte(ttd) && parentBlockTd.lt(ttd)
+  const parentBlockTd = await chain.getTd(block.header.parentHash, block.header.number - BigInt(1))
+  return blockTd >= ttd && parentBlockTd < ttd
 }
 
 /**
@@ -514,7 +515,7 @@ export class Engine {
     // Only validate this as terminal block if this block's difficulty is non-zero,
     // else this is a PoS block but its hardfork could be indeterminable if the skeleton
     // is not yet connected.
-    if (!headBlock._common.gteHardfork(Hardfork.Merge) && headBlock.header.difficulty.gtn(0)) {
+    if (!headBlock._common.gteHardfork(Hardfork.Merge) && headBlock.header.difficulty > BigInt(0)) {
       const validTerminalBlock = await validateTerminalBlock(headBlock, this.chain)
       if (!validTerminalBlock) {
         const response = {
@@ -536,7 +537,7 @@ export class Engine {
     const vmHeadHash = this.chain.headers.latest!.hash()
     if (!vmHeadHash.equals(headBlock.hash())) {
       let parentBlocks: Block[] = []
-      if (this.chain.headers.latest?.number.lt(headBlock.header.number)) {
+      if (this.chain.headers.latest && this.chain.headers.latest.number < headBlock.header.number) {
         try {
           const parent = await this.chain.getBlock(toBuffer(headBlock.header.parentHash))
           const isBlockExecuted = await this.vm.stateManager.hasStateRoot!(parent.header.stateRoot)
@@ -567,10 +568,9 @@ export class Engine {
       await this.execution.setHead(blocks)
       this.service.txPool.removeNewBlockTxs(blocks)
 
-      const timeDiff = new Date().getTime() / 1000 - headBlock.header.timestamp.toNumber()
+      const timeDiff = new Date().getTime() / 1000 - Number(headBlock.header.timestamp)
       if (
-        (!this.config.syncTargetHeight ||
-          this.config.syncTargetHeight.lt(headBlock.header.number)) &&
+        (!this.config.syncTargetHeight || this.config.syncTargetHeight < headBlock.header.number) &&
         timeDiff < 30
       ) {
         this.config.synchronized = true
@@ -620,7 +620,7 @@ export class Engine {
     if (payloadAttributes) {
       const { timestamp, prevRandao, suggestedFeeRecipient } = payloadAttributes
       const parentBlock = this.chain.blocks.latest!
-      const payloadId = await this.pendingBlock.start(this.vm, parentBlock, {
+      const payloadId = await this.pendingBlock.start(await this.vm.copy(), parentBlock, {
         timestamp,
         mixHash: prevRandao,
         coinbase: suggestedFeeRecipient,
@@ -694,7 +694,7 @@ export class Engine {
         message: 'terminalTotalDifficulty not set internally',
       }
     }
-    if (!td.eq(new BN(toBuffer(terminalTotalDifficulty)))) {
+    if (td !== BigInt(terminalTotalDifficulty)) {
       throw {
         code: INVALID_PARAMS,
         message: `terminalTotalDifficulty set to ${td}, received ${parseInt(

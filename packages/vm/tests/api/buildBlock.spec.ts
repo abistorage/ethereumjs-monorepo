@@ -1,23 +1,23 @@
-import tape from 'tape'
-import { Account, Address } from 'ethereumjs-util'
+import * as tape from 'tape'
+import { Account, Address } from '@ethereumjs/util'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { Block } from '@ethereumjs/block'
 import { Transaction, FeeMarketEIP1559Transaction } from '@ethereumjs/tx'
 import Blockchain from '@ethereumjs/blockchain'
-import VM from '../../src'
+import { VM } from '../../src/vm'
 import { setBalance } from './utils'
 
 tape('BlockBuilder', async (t) => {
   t.test('should build a valid block', async (st) => {
-    const common = new Common({ chain: Chain.Mainnet })
-    const genesisBlock = Block.genesis({ header: { gasLimit: 50000 } }, { common })
+    const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
+    const genesisBlock = Block.fromBlockData({ header: { gasLimit: 50000 } }, { common })
     const blockchain = await Blockchain.create({ genesisBlock, common, validateConsensus: false })
     const vm = await VM.create({ common, blockchain })
 
     const address = Address.fromString('0xccfd725760a68823ff1e062f4cc97e1360e8d997')
     await setBalance(vm, address)
 
-    const vmCopy = vm.copy()
+    const vmCopy = await vm.copy()
 
     const blockBuilder = await vm.buildBlock({
       parentBlock: genesisBlock,
@@ -47,7 +47,7 @@ tape('BlockBuilder', async (t) => {
       return address
     }
     const result = await vmCopy.runBlock({ block })
-    st.ok(result.gasUsed.eq(block.header.gasUsed))
+    st.equal(result.gasUsed, block.header.gasUsed)
     st.ok(result.receiptRoot.equals(block.header.receiptTrie))
     st.ok(result.stateRoot.equals(block.header.stateRoot))
     st.ok(result.logsBloom.equals(block.header.logsBloom))
@@ -55,12 +55,12 @@ tape('BlockBuilder', async (t) => {
   })
 
   t.test('should throw if adding a transaction exceeds the block gas limit', async (st) => {
-    const common = new Common({ chain: Chain.Mainnet })
+    const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
     const vm = await VM.create({ common })
-    const genesis = Block.genesis({}, { common })
+    const genesis = Block.fromBlockData({}, { common })
 
     const blockBuilder = await vm.buildBlock({ parentBlock: genesis })
-    const gasLimit = genesis.header.gasLimit.addn(1)
+    const gasLimit = genesis.header.gasLimit + BigInt(1)
     const tx = Transaction.fromTxData({ gasLimit }, { common })
     try {
       await blockBuilder.addTransaction(tx)
@@ -81,15 +81,15 @@ tape('BlockBuilder', async (t) => {
   })
 
   t.test('should revert the VM state if reverted', async (st) => {
-    const common = new Common({ chain: Chain.Mainnet })
-    const genesisBlock = Block.genesis({ header: { gasLimit: 50000 } }, { common })
+    const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
+    const genesisBlock = Block.fromBlockData({ header: { gasLimit: 50000 } }, { common })
     const blockchain = await Blockchain.create({ genesisBlock, common, validateConsensus: false })
     const vm = await VM.create({ common, blockchain })
 
     const address = Address.fromString('0xccfd725760a68823ff1e062f4cc97e1360e8d997')
     await setBalance(vm, address)
 
-    const root0 = await vm.stateManager.getStateRoot()
+    const root0 = await vm.eei.state.getStateRoot()
 
     const blockBuilder = await vm.buildBlock({ parentBlock: genesisBlock })
 
@@ -104,19 +104,19 @@ tape('BlockBuilder', async (t) => {
 
     await blockBuilder.addTransaction(tx)
 
-    const root1 = await vm.stateManager.getStateRoot(true)
+    const root1 = await vm.eei.state.getStateRoot()
     st.ok(!root0.equals(root1), 'state root should change after adding a tx')
 
     await blockBuilder.revert()
-    const root2 = await vm.stateManager.getStateRoot()
+    const root2 = await vm.eei.state.getStateRoot()
 
     st.ok(root2.equals(root0), 'state root should revert to before the tx was run')
     st.end()
   })
 
   t.test('should correctly seal a PoW block', async (st) => {
-    const common = new Common({ chain: Chain.Mainnet })
-    const genesisBlock = Block.genesis({ header: { gasLimit: 50000 } }, { common })
+    const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
+    const genesisBlock = Block.fromBlockData({ header: { gasLimit: 50000 } }, { common })
     const blockchain = await Blockchain.create({ genesisBlock, common, validateConsensus: false })
     const vm = await VM.create({ common, blockchain })
 
@@ -147,7 +147,7 @@ tape('BlockBuilder', async (t) => {
 
     st.ok(block.header.mixHash.equals(sealOpts.mixHash))
     st.ok(block.header.nonce.equals(sealOpts.nonce))
-    st.ok(block.validateDifficulty(genesisBlock))
+    st.doesNotThrow(async () => await vm.blockchain.consensus.validateDifficulty(block.header))
     st.end()
   })
 
@@ -164,11 +164,11 @@ tape('BlockBuilder', async (t) => {
       ),
     }
 
-    const common = new Common({ chain: Chain.Rinkeby })
+    const common = new Common({ chain: Chain.Rinkeby, hardfork: Hardfork.Istanbul })
     // extraData: [vanity, activeSigner, seal]
     const extraData = Buffer.concat([Buffer.alloc(32), signer.address.toBuffer(), Buffer.alloc(65)])
     const cliqueSigner = signer.privateKey
-    const genesisBlock = Block.genesis(
+    const genesisBlock = Block.fromBlockData(
       { header: { gasLimit: 50000, extraData } },
       { common, cliqueSigner }
     )
@@ -176,11 +176,11 @@ tape('BlockBuilder', async (t) => {
     const vm = await VM.create({ common, blockchain })
 
     // add balance for tx
-    await vm.stateManager.putAccount(signer.address, Account.fromAccountData({ balance: 100000 }))
+    await vm.eei.state.putAccount(signer.address, Account.fromAccountData({ balance: 100000 }))
 
     const blockBuilder = await vm.buildBlock({
       parentBlock: genesisBlock,
-      headerData: { difficulty: 2 },
+      headerData: { difficulty: 2, extraData: Buffer.alloc(97) },
       blockOpts: { cliqueSigner, freeze: false },
     })
 
@@ -203,8 +203,8 @@ tape('BlockBuilder', async (t) => {
   })
 
   t.test('should throw if block already built or reverted', async (st) => {
-    const common = new Common({ chain: Chain.Mainnet })
-    const genesisBlock = Block.genesis({ header: { gasLimit: 50000 } }, { common })
+    const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
+    const genesisBlock = Block.fromBlockData({ header: { gasLimit: 50000 } }, { common })
     const blockchain = await Blockchain.create({ genesisBlock, common, validateConsensus: false })
     const vm = await VM.create({ common, blockchain })
 
@@ -266,11 +266,11 @@ tape('BlockBuilder', async (t) => {
   })
 
   t.test('should build a block without any txs', async (st) => {
-    const common = new Common({ chain: Chain.Mainnet })
-    const genesisBlock = Block.genesis({ header: { gasLimit: 50000 } }, { common })
+    const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
+    const genesisBlock = Block.fromBlockData({ header: { gasLimit: 50000 } }, { common })
     const blockchain = await Blockchain.create({ genesisBlock, common, validateConsensus: false })
     const vm = await VM.create({ common, blockchain })
-    const vmCopy = vm.copy()
+    const vmCopy = await vm.copy()
 
     const blockBuilder = await vm.buildBlock({
       parentBlock: genesisBlock,
@@ -281,7 +281,7 @@ tape('BlockBuilder', async (t) => {
 
     // block should successfully execute with VM.runBlock and have same outputs
     const result = await vmCopy.runBlock({ block })
-    st.ok(result.gasUsed.eq(block.header.gasUsed))
+    st.equal(result.gasUsed, block.header.gasUsed)
     st.ok(result.receiptRoot.equals(block.header.receiptTrie))
     st.ok(result.stateRoot.equals(block.header.stateRoot))
     st.ok(result.logsBloom.equals(block.header.logsBloom))
@@ -290,7 +290,7 @@ tape('BlockBuilder', async (t) => {
 
   t.test('should build a 1559 block with legacy and 1559 txs', async (st) => {
     const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.London, eips: [1559] })
-    const genesisBlock = Block.genesis(
+    const genesisBlock = Block.fromBlockData(
       { header: { gasLimit: 50000, baseFeePerGas: 100 } },
       { common }
     )
@@ -300,7 +300,7 @@ tape('BlockBuilder', async (t) => {
     const address = Address.fromString('0xccfd725760a68823ff1e062f4cc97e1360e8d997')
     await setBalance(vm, address)
 
-    const vmCopy = vm.copy()
+    const vmCopy = await vm.copy()
 
     const blockBuilder = await vm.buildBlock({
       parentBlock: genesisBlock,
@@ -365,7 +365,7 @@ tape('BlockBuilder', async (t) => {
     )
 
     st.ok(
-      block.header.baseFeePerGas!.eq(genesisBlock.header.calcNextBaseFee()),
+      block.header.baseFeePerGas! === genesisBlock.header.calcNextBaseFee(),
       "baseFeePerGas should equal parentHeader's calcNextBaseFee"
     )
 
@@ -377,7 +377,7 @@ tape('BlockBuilder', async (t) => {
       return address
     }
     const result = await vmCopy.runBlock({ block })
-    st.ok(result.gasUsed.eq(block.header.gasUsed))
+    st.equal(result.gasUsed, block.header.gasUsed)
     st.ok(result.receiptRoot.equals(block.header.receiptTrie))
     st.ok(result.stateRoot.equals(block.header.stateRoot))
     st.ok(result.logsBloom.equals(block.header.logsBloom))

@@ -1,5 +1,5 @@
 import { readFileSync } from 'fs'
-import Benchmark = require('benchmark')
+import Benchmark from 'benchmark'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { Block } from '@ethereumjs/block'
 import blockFromRPC from '@ethereumjs/block/dist/from-rpc'
@@ -9,7 +9,9 @@ import { getPreState, getBlockchain, verifyResult } from './util'
 const BLOCK_FIXTURE = 'benchmarks/fixture/blocks-prestate.json'
 
 const runBlock = async (vm: VM, block: Block, receipts: any) => {
-  await vm.copy().runBlock({
+  await (
+    await vm.copy()
+  ).runBlock({
     block,
     generate: true,
     skipBlockValidation: true,
@@ -30,7 +32,7 @@ export async function mainnetBlocks(suite?: Benchmark.Suite, numSamples?: number
 
   for (const blockData of data) {
     const block = blockFromRPC(blockData.block, [], { common })
-    const blockNumber = block.header.number.toNumber()
+    const blockNumber = Number(block.header.number)
     const { receipts, preState, blockhashes } = blockData
 
     if ([9422909, 9422911, 9422912, 9422913, 9422914].includes(blockNumber)) {
@@ -43,7 +45,7 @@ export async function mainnetBlocks(suite?: Benchmark.Suite, numSamples?: number
 
     const stateManager = await getPreState(preState, common)
     const blockchain = getBlockchain(blockhashes) as any
-    const vm = new VM({ stateManager, common, blockchain })
+    const vm = await VM.create({ stateManager, common, blockchain })
 
     if (suite) {
       suite.add(`Block ${blockNumber}`, async () => {

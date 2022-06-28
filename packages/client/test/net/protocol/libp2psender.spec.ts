@@ -1,4 +1,4 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Libp2pSender } from '../../../lib/net/protocol'
 const DuplexPair = require('it-pair/duplex')
 
@@ -12,7 +12,7 @@ tape('[Libp2pSender]', (t) => {
       t.equal(receiver.status.id.toString('hex'), '05', 'status getter')
       t.end()
     })
-    sender.sendStatus({ id: 5 })
+    sender.sendStatus({ id: Buffer.from('05', 'hex') })
   })
 
   t.test('should send/receive message', (t) => {
@@ -24,7 +24,7 @@ tape('[Libp2pSender]', (t) => {
       t.equal(message.payload.toString('hex'), '05', 'message received (payload)')
       t.end()
     })
-    sender.sendMessage(1, 5)
+    sender.sendMessage(1, Buffer.from('05', 'hex'))
   })
 
   t.test('should catch errors', (t) => {

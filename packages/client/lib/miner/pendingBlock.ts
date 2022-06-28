@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto'
 import type VM from '@ethereumjs/vm'
-import type { TxReceipt } from '@ethereumjs/vm/dist/types'
+import type { TxReceipt } from '@ethereumjs/vm'
 import type { BlockBuilder } from '@ethereumjs/vm/dist/buildBlock'
 import type { Block, HeaderData } from '@ethereumjs/block'
 import type { TypedTransaction } from '@ethereumjs/tx'
@@ -37,7 +37,7 @@ export class PendingBlock {
    * @returns an 8-byte payload identifier to call {@link BlockBuilder.build} with
    */
   async start(vm: VM, parentBlock: Block, headerData: Partial<HeaderData> = {}) {
-    const number = parentBlock.header.number.addn(1)
+    const number = parentBlock.header.number + BigInt(1)
     const { gasLimit } = parentBlock.header
     const baseFeePerGas = vm._common.isActivatedEIP(1559)
       ? parentBlock.header.calcNextBaseFee()
@@ -45,7 +45,7 @@ export class PendingBlock {
 
     // Set the state root to ensure the resulting state
     // is based on the parent block's state
-    await vm.stateManager.setStateRoot(parentBlock.header.stateRoot)
+    await vm.eei.state.setStateRoot(parentBlock.header.stateRoot)
 
     const td = await vm.blockchain.getTotalDifficulty(parentBlock.hash())
     vm._common.setHardforkByBlockNumber(parentBlock.header.number, td)
@@ -78,11 +78,11 @@ export class PendingBlock {
         await builder.addTransaction(txs[index])
       } catch (error: any) {
         if (error.message === 'tx has a higher gas limit than the remaining gas in the block') {
-          if (builder.gasUsed.gt(gasLimit.subn(21000))) {
+          if (builder.gasUsed > gasLimit - BigInt(21000)) {
             // If block has less than 21000 gas remaining, consider it full
             blockFull = true
             this.config.logger.info(
-              `Pending: Assembled block full (gasLeft: ${gasLimit.sub(builder.gasUsed)})`
+              `Pending: Assembled block full (gasLeft: ${gasLimit - builder.gasUsed})`
             )
           }
         } else {
@@ -136,7 +136,7 @@ export class PendingBlock {
         await builder.addTransaction(txs[index])
       } catch (error: any) {
         if (error.message === 'tx has a higher gas limit than the remaining gas in the block') {
-          if (builder.gasUsed.gt((builder as any).headerData.gasLimit.subn(21000))) {
+          if (builder.gasUsed > (builder as any).headerData.gasLimit - BigInt(21000)) {
             // If block has less than 21000 gas remaining, consider it full
             blockFull = true
             this.config.logger.info(`Pending: Assembled block full`)

@@ -1,16 +1,16 @@
-import tape from 'tape'
-import { BN } from 'ethereumjs-util'
-import VM from '../../../src'
+import * as tape from 'tape'
+import { VM } from '../../../src/vm'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
+import EVM from '@ethereumjs/evm'
 
 tape('Berlin: EIP 2315 tests', (t) => {
   const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Berlin, eips: [2315] })
 
   const runTest = async function (test: any, st: tape.Test) {
     let i = 0
-    const vm = new VM({ common })
+    const vm = await VM.create({ common })
 
-    vm.on('step', function (step: any) {
+    ;(<EVM>vm.evm).on('step', function (step: any) {
       if (test.steps.length) {
         st.equal(step.pc, test.steps[i].expectedPC)
         st.equal(step.opcode.name, test.steps[i].expectedOpcode)
@@ -18,9 +18,9 @@ tape('Berlin: EIP 2315 tests', (t) => {
       i++
     })
 
-    const result = await vm.runCode({
+    const result = await vm.evm.runCode!({
       code: Buffer.from(test.code, 'hex'),
-      gasLimit: new BN(0xffffffffff),
+      gasLimit: BigInt(0xffffffffff),
     })
 
     st.equal(i, test.totalSteps)

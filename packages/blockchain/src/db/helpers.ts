@@ -1,5 +1,6 @@
 import { DBOp, DBTarget } from './operation'
-import { BN, rlp } from 'ethereumjs-util'
+import { bufArrToArr } from '@ethereumjs/util'
+import RLP from 'rlp'
 import { Block, BlockHeader } from '@ethereumjs/block'
 import { bufBE8 } from './constants'
 
@@ -8,8 +9,8 @@ import { bufBE8 } from './constants'
  * and the DB operations from `db/operation.ts` and also handles the right encoding of the keys
  */
 
-function DBSetTD(TD: BN, blockNumber: BN, blockHash: Buffer): DBOp {
-  return DBOp.set(DBTarget.TotalDifficulty, rlp.encode(TD), {
+function DBSetTD(TD: bigint, blockNumber: bigint, blockHash: Buffer): DBOp {
+  return DBOp.set(DBTarget.TotalDifficulty, Buffer.from(RLP.encode(TD)), {
     blockNumber,
     blockHash,
   })
@@ -37,13 +38,13 @@ function DBSetBlockOrHeader(blockBody: Block | BlockHeader): DBOp[] {
     })
   )
 
-  const isGenesis = header.number.eqn(0)
+  const isGenesis = header.number === BigInt(0)
 
   if (
     isGenesis ||
     (blockBody instanceof Block && (blockBody.transactions.length || blockBody.uncleHeaders.length))
   ) {
-    const bodyValue = rlp.encode(blockBody.raw().slice(1))
+    const bodyValue = Buffer.from(RLP.encode(bufArrToArr(blockBody.raw()).slice(1)))
     dbOps.push(
       DBOp.set(DBTarget.Body, bodyValue, {
         blockNumber,
@@ -55,14 +56,14 @@ function DBSetBlockOrHeader(blockBody: Block | BlockHeader): DBOp[] {
   return dbOps
 }
 
-function DBSetHashToNumber(blockHash: Buffer, blockNumber: BN): DBOp {
+function DBSetHashToNumber(blockHash: Buffer, blockNumber: bigint): DBOp {
   const blockNumber8Byte = bufBE8(blockNumber)
   return DBOp.set(DBTarget.HashToNumber, blockNumber8Byte, {
     blockHash,
   })
 }
 
-function DBSaveLookups(blockHash: Buffer, blockNumber: BN): DBOp[] {
+function DBSaveLookups(blockHash: Buffer, blockNumber: bigint): DBOp[] {
   const ops = []
   ops.push(DBOp.set(DBTarget.NumberToHash, blockHash, { blockNumber }))
 

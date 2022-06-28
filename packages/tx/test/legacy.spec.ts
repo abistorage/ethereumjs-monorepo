@@ -1,6 +1,14 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Buffer } from 'buffer'
-import { BN, rlp, toBuffer, bufferToHex, intToBuffer, unpadBuffer } from 'ethereumjs-util'
+import {
+  arrToBufArr,
+  bufferToBigInt,
+  bufferToHex,
+  intToBuffer,
+  toBuffer,
+  unpadBuffer,
+} from '@ethereumjs/util'
+import RLP from 'rlp'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { Transaction, TxData } from '../src'
 import { TxsJsonEntry, VitaliksTestsDataEntry } from './types'
@@ -19,7 +27,7 @@ tape('[Transaction]', function (t) {
       '0xaa.1',
       -10.1,
       -1,
-      new BN(-10),
+      BigInt(-10),
       '-100',
       '-10.1',
       '-0xaa',
@@ -55,28 +63,30 @@ tape('[Transaction]', function (t) {
     txData[6] = intToBuffer(45) // v with 0-parity and chain ID 5
     let tx = Transaction.fromValuesArray(txData)
     st.ok(
-      tx.common.chainIdBN().eqn(5),
+      tx.common.chainId() === BigInt(5),
       'should initialize Common with chain ID (supported) derived from v value (v with 0-parity)'
     )
 
     txData[6] = intToBuffer(46) // v with 1-parity and chain ID 5
     tx = Transaction.fromValuesArray(txData)
     st.ok(
-      tx.common.chainIdBN().eqn(5),
+      tx.common.chainId() === BigInt(5),
       'should initialize Common with chain ID (supported) derived from v value (v with 1-parity)'
     )
 
     txData[6] = intToBuffer(2033) // v with 0-parity and chain ID 999
     tx = Transaction.fromValuesArray(txData)
-    st.ok(
-      tx.common.chainIdBN().eqn(999),
+    st.equal(
+      tx.common.chainId(),
+      BigInt(999),
       'should initialize Common with chain ID (unsupported) derived from v value (v with 0-parity)'
     )
 
     txData[6] = intToBuffer(2034) // v with 1-parity and chain ID 999
     tx = Transaction.fromValuesArray(txData)
-    st.ok(
-      tx.common.chainIdBN().eqn(999),
+    st.equal(
+      tx.common.chainId(),
+      BigInt(999),
       'should initialize Common with chain ID (unsupported) derived from v value (v with 1-parity)'
     )
     st.end()
@@ -103,8 +113,8 @@ tape('[Transaction]', function (t) {
   })
 
   t.test('Initialization -> should accept lesser r values', function (st) {
-    const tx = Transaction.fromTxData({ r: new BN(toBuffer('0x0005')) })
-    st.equals(tx.r!.toString('hex'), '5')
+    const tx = Transaction.fromTxData({ r: bufferToBigInt(toBuffer('0x0005')) })
+    st.equal(tx.r!.toString(16), '5')
     st.end()
   })
 
@@ -113,7 +123,7 @@ tape('[Transaction]', function (t) {
     function (st) {
       let common = new Common({ chain: 42, hardfork: Hardfork.Petersburg })
       let tx = Transaction.fromTxData({}, { common })
-      st.ok(tx.common.chainIdBN().eqn(42))
+      st.equal(tx.common.chainId(), BigInt(42))
       const privKey = Buffer.from(txFixtures[0].privateKey, 'hex')
       tx = tx.sign(privKey)
       const serialized = tx.serialize()
@@ -128,7 +138,7 @@ tape('[Transaction]', function (t) {
     function (st) {
       st.throws(() => {
         const common = new Common({ chain: 42, hardfork: Hardfork.Petersburg })
-        Transaction.fromTxData({ v: new BN(1) }, { common })
+        Transaction.fromTxData({ v: BigInt(1) }, { common })
       })
       st.end()
     }
@@ -136,26 +146,26 @@ tape('[Transaction]', function (t) {
 
   t.test('validate() -> should validate with string option', function (st) {
     transactions.forEach(function (tx) {
-      st.ok(typeof tx.validate(true)[0] === 'string')
+      st.equal(typeof tx.validate(true)[0], 'string')
     })
     st.end()
   })
 
   t.test('getBaseFee() -> should return base fee', function (st) {
     const tx = Transaction.fromTxData({})
-    st.equals(tx.getBaseFee().toNumber(), 53000)
+    st.equal(tx.getBaseFee(), BigInt(53000))
     st.end()
   })
 
   t.test('getDataFee() -> should return data fee', function (st) {
     let tx = Transaction.fromTxData({})
-    st.equals(tx.getDataFee().toNumber(), 0)
+    st.equal(tx.getDataFee(), BigInt(0))
 
     tx = Transaction.fromValuesArray(txFixtures[3].raw.map(toBuffer))
-    st.equals(tx.getDataFee().toNumber(), 1716)
+    st.equal(tx.getDataFee(), BigInt(1716))
 
     tx = Transaction.fromValuesArray(txFixtures[3].raw.map(toBuffer), { freeze: false })
-    st.equals(tx.getDataFee().toNumber(), 1716)
+    st.equal(tx.getDataFee(), BigInt(1716))
 
     st.end()
   })
@@ -163,12 +173,12 @@ tape('[Transaction]', function (t) {
   t.test('getDataFee() -> should return correct data fee for istanbul', function (st) {
     const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
     let tx = Transaction.fromTxData({}, { common })
-    st.equals(tx.getDataFee().toNumber(), 0)
+    st.equal(tx.getDataFee(), BigInt(0))
 
     tx = Transaction.fromValuesArray(txFixtures[3].raw.map(toBuffer), {
       common,
     })
-    st.equals(tx.getDataFee().toNumber(), 1716)
+    st.equal(tx.getDataFee(), BigInt(1716))
 
     st.end()
   })
@@ -178,9 +188,9 @@ tape('[Transaction]', function (t) {
     const tx = Transaction.fromValuesArray(txFixtures[0].raw.map(toBuffer), {
       common,
     })
-    st.equals(tx.getDataFee().toNumber(), 656)
+    st.equal(tx.getDataFee(), BigInt(656))
     tx.common.setHardfork(Hardfork.Istanbul)
-    st.equals(tx.getDataFee().toNumber(), 240)
+    st.equal(tx.getDataFee(), BigInt(240))
     st.end()
   })
 
@@ -190,14 +200,14 @@ tape('[Transaction]', function (t) {
       gasLimit: 10000000,
       value: 42,
     })
-    st.equals(tx.getUpfrontCost().toNumber(), 10000000042)
+    st.equal(tx.getUpfrontCost(), BigInt(10000000042))
     st.end()
   })
 
   t.test('serialize()', function (st) {
     transactions.forEach(function (tx, i) {
       const s1 = tx.serialize()
-      const s2 = rlp.encode(txFixtures[i].raw)
+      const s2 = Buffer.from(RLP.encode(txFixtures[i].raw))
       st.ok(s1.equals(s2))
     })
     st.end()
@@ -220,21 +230,13 @@ tape('[Transaction]', function (t) {
       chain: Chain.Mainnet,
       hardfork: Hardfork.TangerineWhistle,
     })
-    // Test currently commented out, see comment on legacy tx hash() function
-    /*let tx = Transaction.fromValuesArray(txFixtures[3].raw.slice(0, 6).map(toBuffer), {
+
+    let tx = Transaction.fromValuesArray(txFixtures[3].raw.slice(0, 6).map(toBuffer), {
       common,
     })
     st.throws(() => {
       tx.hash()
-    }, 'should throw calling hash with unsigned tx')*/
-    let tx = Transaction.fromValuesArray(txFixtures[3].raw.map(toBuffer), {
-      common,
-      freeze: false,
-    })
-    st.deepEqual(
-      tx.hash(),
-      Buffer.from('375a8983c9fc56d7cfd118254a80a8d7403d590a6c9e105532b67aca1efb97aa', 'hex')
-    )
+    }, 'should throw calling hash with unsigned tx')
     tx = Transaction.fromValuesArray(txFixtures[3].raw.map(toBuffer), {
       common,
     })
@@ -389,8 +391,6 @@ tape('[Transaction]', function (t) {
         'hex'
       )
 
-      const fixtureTxSignedWithEIP155 = Transaction.fromTxData(txData).sign(privateKey)
-
       const common = new Common({
         chain: Chain.Mainnet,
         hardfork: Hardfork.TangerineWhistle,
@@ -400,41 +400,37 @@ tape('[Transaction]', function (t) {
         common,
       }).sign(privateKey)
 
-      let signedWithEIP155 = Transaction.fromTxData(<any>fixtureTxSignedWithEIP155.toJSON()).sign(
-        privateKey
-      )
+      let signedWithEIP155 = Transaction.fromTxData(<any>txData).sign(privateKey)
 
       st.true(signedWithEIP155.verifySignature())
-      st.notEqual(signedWithEIP155.v?.toString('hex'), '1c')
-      st.notEqual(signedWithEIP155.v?.toString('hex'), '1b')
+      st.notEqual(signedWithEIP155.v?.toString(16), '1c')
+      st.notEqual(signedWithEIP155.v?.toString(16), '1b')
 
       signedWithEIP155 = Transaction.fromTxData(<any>fixtureTxSignedWithoutEIP155.toJSON()).sign(
         privateKey
       )
 
       st.true(signedWithEIP155.verifySignature())
-      st.notEqual(signedWithEIP155.v?.toString('hex'), '1c')
-      st.notEqual(signedWithEIP155.v?.toString('hex'), '1b')
+      st.notEqual(signedWithEIP155.v?.toString(16), '1c')
+      st.notEqual(signedWithEIP155.v?.toString(16), '1b')
 
-      let signedWithoutEIP155 = Transaction.fromTxData(<any>fixtureTxSignedWithEIP155.toJSON(), {
+      let signedWithoutEIP155 = Transaction.fromTxData(<any>txData, {
         common,
       }).sign(privateKey)
 
       st.true(signedWithoutEIP155.verifySignature())
       st.true(
-        signedWithoutEIP155.v?.toString('hex') == '1c' ||
-          signedWithoutEIP155.v?.toString('hex') == '1b',
+        signedWithoutEIP155.v?.toString(16) == '1c' || signedWithoutEIP155.v?.toString(16) == '1b',
         "v shouldn't be EIP155 encoded"
       )
 
-      signedWithoutEIP155 = Transaction.fromTxData(<any>fixtureTxSignedWithoutEIP155.toJSON(), {
+      signedWithoutEIP155 = Transaction.fromTxData(<any>txData, {
         common,
       }).sign(privateKey)
 
       st.true(signedWithoutEIP155.verifySignature())
       st.true(
-        signedWithoutEIP155.v?.toString('hex') == '1c' ||
-          signedWithoutEIP155.v?.toString('hex') == '1b',
+        signedWithoutEIP155.v?.toString(16) == '1c' || signedWithoutEIP155.v?.toString(16) == '1b',
         "v shouldn' be EIP155 encoded"
       )
 
@@ -442,10 +438,31 @@ tape('[Transaction]', function (t) {
     }
   )
 
+  t.test(
+    'constructor: throw on legacy transactions which have v != 27 and v != 28 and v < 37',
+    function (st) {
+      function getTxData(v: number) {
+        return {
+          v,
+        }
+      }
+      for (let n = 0; n < 27; n++) {
+        st.throws(() => Transaction.fromTxData(getTxData(n)))
+      }
+      st.throws(() => Transaction.fromTxData(getTxData(29)))
+      st.throws(() => Transaction.fromTxData(getTxData(36)))
+
+      st.doesNotThrow(() => Transaction.fromTxData(getTxData(27)))
+      st.doesNotThrow(() => Transaction.fromTxData(getTxData(28)))
+      st.doesNotThrow(() => Transaction.fromTxData(getTxData(37)))
+      st.end()
+    }
+  )
+
   t.test('sign(), verifySignature(): sign tx with chainId specified in params', function (st) {
     const common = new Common({ chain: 42, hardfork: Hardfork.Petersburg })
     let tx = Transaction.fromTxData({}, { common })
-    st.ok(tx.common.chainIdBN().eqn(42))
+    st.equal(tx.common.chainId(), BigInt(42))
 
     const privKey = Buffer.from(txFixtures[0].privateKey, 'hex')
     tx = tx.sign(privKey)
@@ -454,7 +471,7 @@ tape('[Transaction]', function (t) {
 
     const reTx = Transaction.fromSerializedTx(serialized, { common })
     st.equal(reTx.verifySignature(), true)
-    st.ok(reTx.common.chainIdBN().eqn(42))
+    st.equal(reTx.common.chainId(), BigInt(42))
 
     st.end()
   })
@@ -519,7 +536,7 @@ tape('[Transaction]', function (t) {
     tx = Transaction.fromSerializedTx(rawSigned)
     st.ok(tx.isSigned())
 
-    const signedValues = rlp.decode(rawSigned) as any as Buffer[]
+    const signedValues = arrToBufArr(RLP.decode(Uint8Array.from(rawSigned))) as Buffer[]
     tx = Transaction.fromValuesArray(signedValues)
     st.ok(tx.isSigned())
     tx = Transaction.fromValuesArray(signedValues.slice(0, 6))

@@ -5,7 +5,6 @@ import { TypedTransaction } from '@ethereumjs/tx'
 import { Block, BlockHeader } from '@ethereumjs/block'
 import ms from 'ms'
 import chalk from 'chalk'
-import assert from 'assert'
 import { randomBytes } from 'crypto'
 
 const PRIVATE_KEY = randomBytes(32)
@@ -89,7 +88,10 @@ rlpx.on('peer:added', (peer) => {
   })
 
   les.once('status', (status: LES.Status) => {
-    const msg = [0, [devp2p.buffer2int(status['headNum']), 1, 0, 1]]
+    const msg = [
+      Buffer.from([]),
+      [devp2p.buffer2int(status['headNum']), Buffer.from([1]), Buffer.from([]), Buffer.from([1])],
+    ]
     les.sendMessage(devp2p.LES.MESSAGE_CODES.GET_BLOCK_HEADERS, msg)
   })
 
@@ -105,7 +107,10 @@ rlpx.on('peer:added', (peer) => {
         const header = BlockHeader.fromValuesArray(payload[2][0], { common })
 
         setTimeout(() => {
-          les.sendMessage(devp2p.LES.MESSAGE_CODES.GET_BLOCK_BODIES, [1, [header.hash()]])
+          les.sendMessage(devp2p.LES.MESSAGE_CODES.GET_BLOCK_BODIES, [
+            Buffer.from([1]),
+            [header.hash()],
+          ])
           requests.bodies.push(header)
         }, ms('0.1s'))
         break
@@ -155,7 +160,7 @@ rlpx.on('peer:removed', (peer, reasonCode, disconnectWe) => {
 rlpx.on('peer:error', (peer, err) => {
   if (err.code === 'ECONNRESET') return
 
-  if (err instanceof assert.AssertionError) {
+  if (err instanceof Error) {
     const peerId = peer.getId()
     if (peerId !== null) dpt.banPeer(peerId, ms('5m'))
 
@@ -191,7 +196,7 @@ dpt.addPeer({ address: '127.0.0.1', udpPort: 30303, tcpPort: 30303 })
 
 function onNewBlock(block: Block, peer: Peer) {
   const blockHashHex = block.hash().toString('hex')
-  const blockNumber = block.header.number.toNumber()
+  const blockNumber = block.header.number
 
   console.log(
     `----------------------------------------------------------------------------------------------------------`

@@ -1,12 +1,13 @@
-import tape from 'tape'
-import { Account, Address, BN } from 'ethereumjs-util'
-import VM from '../../../src'
+import * as tape from 'tape'
+import { Account, Address } from '@ethereumjs/util'
+import { VM } from '../../../src/vm'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { Transaction } from '@ethereumjs/tx'
+import EVM from '@ethereumjs/evm'
 
 // Test cases source: https://gist.github.com/holiman/174548cad102096858583c6fbbb0649a
 tape('EIP 2929: gas cost tests', (t) => {
-  const initialGas = new BN(0xffffffffff)
+  const initialGas = BigInt(0xffffffffff)
   const address = new Address(Buffer.from('000000000000000000000000636F6E7472616374', 'hex'))
   const senderKey = Buffer.from(
     'e331b6d69882b4cb4ea581d88e0b604039a3de5967688d3dcffdd2270c0fd109',
@@ -17,10 +18,10 @@ tape('EIP 2929: gas cost tests', (t) => {
   const runTest = async function (test: any, st: tape.Test) {
     let i = 0
     let currentGas = initialGas
-    const vm = new VM({ common })
+    const vm = await VM.create({ common })
 
-    vm.on('step', function (step: any) {
-      const gasUsed = currentGas.sub(step.gasLeft)
+    ;(<EVM>vm.evm).on('step', function (step: any) {
+      const gasUsed = currentGas - step.gasLeft
       currentGas = step.gasLeft
 
       if (test.steps.length) {
@@ -35,13 +36,13 @@ tape('EIP 2929: gas cost tests', (t) => {
         // The first opcode of every test should be +/- irrelevant
         // (ex: PUSH) and the last opcode is always STOP
         if (i > 0) {
-          const expectedGasUsed = new BN(test.steps[i - 1].expectedGasUsed)
+          const expectedGasUsed = BigInt(test.steps[i - 1].expectedGasUsed)
           st.equal(
             true,
-            gasUsed.eq(expectedGasUsed),
+            gasUsed === expectedGasUsed,
             `Opcode: ${
               test.steps[i - 1].expectedOpcode
-            }, Gase Used: ${gasUsed}, Expected: ${expectedGasUsed}`
+            }, Gas Used: ${gasUsed}, Expected: ${expectedGasUsed}`
           )
         }
       }
@@ -59,12 +60,12 @@ tape('EIP 2929: gas cost tests', (t) => {
 
     const result = await vm.runTx({ tx })
 
-    const totalGasUsed = initialGas.sub(currentGas)
-    st.equal(true, totalGasUsed.eq(new BN(test.totalGasUsed).addn(21000))) // Add tx upfront cost.
+    const totalGasUsed = initialGas - currentGas
+    st.equal(true, totalGasUsed === BigInt(test.totalGasUsed) + BigInt(21000)) // Add tx upfront cost.
     return result
   }
 
-  const runCodeTest = async function (code: string, expectedGasUsed: number, st: tape.Test) {
+  const runCodeTest = async function (code: string, expectedGasUsed: bigint, st: tape.Test) {
     // setup the accounts for this test
     const privateKey = Buffer.from(
       'e331b6d69882b4cb4ea581d88e0b604039a3de5967688d3dcffdd2270c0fd109',
@@ -75,21 +76,21 @@ tape('EIP 2929: gas cost tests', (t) => {
     )
 
     const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Berlin, eips: [2929] })
-    const vm = new VM({ common })
+    const vm = await VM.create({ common })
 
     await vm.stateManager.putContractCode(contractAddress, Buffer.from(code, 'hex')) // setup the contract code
 
     // setup the call arguments
     const unsignedTx = Transaction.fromTxData({
-      gasLimit: new BN(21000 + 9000), // ensure we pass a lot of gas, so we do not run out of gas
+      gasLimit: BigInt(21000 + 9000), // ensure we pass a lot of gas, so we do not run out of gas
       to: contractAddress, // call to the contract address,
-      value: new BN(1),
+      value: BigInt(1),
     })
 
     const tx = unsignedTx.sign(privateKey)
 
     const address = Address.fromPrivateKey(privateKey)
-    const initialBalance = new BN(10).pow(new BN(18))
+    const initialBalance = BigInt(10) ** BigInt(18)
 
     const account = await vm.stateManager.getAccount(address)
     await vm.stateManager.putAccount(
@@ -99,7 +100,7 @@ tape('EIP 2929: gas cost tests', (t) => {
 
     const result = await vm.runTx({ tx })
 
-    st.ok(result.gasUsed.toNumber() == expectedGasUsed)
+    st.equal(result.totalGasSpent, expectedGasUsed)
   }
 
   // Checks EXT(codehash,codesize,balance) of precompiles, which should be 100,
@@ -157,24 +158,24 @@ tape('EIP 2929: gas cost tests', (t) => {
   t.test('should charge for extcodecopy correctly', async (st) => {
     const test = {
       code: '60006000600060ff3c60006000600060ff3c600060006000303c00',
-      totalGasUsed: 2835,
+      totalGasUsed: BigInt(2835),
       steps: [
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'EXTCODECOPY', expectedGasUsed: 2600 },
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'EXTCODECOPY', expectedGasUsed: 100 },
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'PUSH1', expectedGasUsed: 3 },
-        { expectedOpcode: 'ADDRESS', expectedGasUsed: 2 },
-        { expectedOpcode: 'EXTCODECOPY', expectedGasUsed: 100 },
-        { expectedOpcode: 'STOP', expectedGasUsed: 0 },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'EXTCODECOPY', expectedGasUsed: BigInt(2600) },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'EXTCODECOPY', expectedGasUsed: BigInt(100) },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'PUSH1', expectedGasUsed: BigInt(3) },
+        { expectedOpcode: 'ADDRESS', expectedGasUsed: BigInt(2) },
+        { expectedOpcode: 'EXTCODECOPY', expectedGasUsed: BigInt(100) },
+        { expectedOpcode: 'STOP', expectedGasUsed: BigInt(0) },
       ],
     }
 
@@ -258,7 +259,7 @@ tape('EIP 2929: gas cost tests', (t) => {
     st.end()
   })
 
-  tape('ensure warm addresses/slots are tracked transaction-wide', async (t) => {
+  t.test('ensure warm addresses/slots are tracked transaction-wide', async (st) => {
     // Note: these tests were manually analyzed to check if these are correct.
     // The gas cost has been taken from these tests.
 
@@ -272,21 +273,21 @@ tape('EIP 2929: gas cost tests', (t) => {
     // SLOAD or CALL operations.
 
     // load same storage slot twice (also in inner call)
-    await runCodeTest('60005460003415601357600080808080305AF15B00', 23369, t)
+    await runCodeTest('60005460003415601357600080808080305AF15B00', BigInt(23369), st)
     // call to contract, load slot 0, revert inner call. load slot 0 in outer call.
-    await runCodeTest('341515600D57600054600080FD5B600080808080305AF160005400', 25374, t)
+    await runCodeTest('341515600D57600054600080FD5B600080808080305AF160005400', BigInt(25374), st)
 
     // call to address 0xFFFF..FF
     const callFF = '6000808080806000195AF1'
     // call address 0xFF..FF, now call same contract again, call 0xFF..FF again (it is now warm)
-    await runCodeTest(callFF + '60003415601B57600080808080305AF15B00', 23909, t)
+    await runCodeTest(callFF + '60003415601B57600080808080305AF15B00', BigInt(23909), st)
     // call to contract, call 0xFF..FF, revert, call 0xFF..FF (should be cold)
     await runCodeTest(
       '341515601557' + callFF + '600080FD5B600080808080305AF1' + callFF + '00',
-      26414,
-      t
+      BigInt(26414),
+      st
     )
 
-    t.end()
+    st.end()
   })
 })

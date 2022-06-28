@@ -1,13 +1,14 @@
-import tape from 'tape'
-import { Address, BN, privateToAddress } from 'ethereumjs-util'
-import VM from '../../../src'
+import * as tape from 'tape'
+import { Address, privateToAddress } from '@ethereumjs/util'
+import { VM } from '../../../src/vm'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { FeeMarketEIP1559Transaction, TypedTransaction } from '@ethereumjs/tx'
 import { Block } from '@ethereumjs/block'
-import { InterpreterStep } from '../../../src/evm/interpreter'
+import { InterpreterStep } from '@ethereumjs/evm/dist/interpreter'
+import EVM from '@ethereumjs/evm'
 
-const GWEI = new BN('1000000000')
-const ETHER = GWEI.mul(GWEI)
+const GWEI = BigInt('1000000000')
+const ETHER = GWEI * GWEI
 
 const common = new Common({
   eips: [1559, 2718, 2930, 3198],
@@ -17,14 +18,14 @@ const common = new Common({
 
 // Small hack to hack in the activation block number
 // (Otherwise there would be need for a custom chain only for testing purposes)
-common.hardforkBlockBN = function (hardfork: string | undefined) {
+common.hardforkBlock = function (hardfork: string | undefined) {
   if (hardfork === 'london') {
-    return new BN(1)
+    return BigInt(1)
   } else if (hardfork === 'dao') {
     // Avoid DAO HF side-effects
-    return new BN(99)
+    return BigInt(99)
   }
-  return new BN(0)
+  return BigInt(0)
 }
 
 const coinbase = new Address(Buffer.from('11'.repeat(20), 'hex'))
@@ -37,14 +38,14 @@ const sender = new Address(privateToAddress(pkey))
  * @param transaction - the transaction in the block
  * @param txType - the txtype to use
  */
-function makeBlock(baseFee: BN, transaction: TypedTransaction, txType: number) {
+function makeBlock(baseFee: bigint, transaction: TypedTransaction, txType: number) {
   const signed = transaction.sign(pkey)
   const json = <any>signed.toJSON()
   json.type = txType
   const block = Block.fromBlockData(
     {
       header: {
-        number: new BN(1),
+        number: BigInt(1),
         coinbase,
         baseFeePerGas: baseFee,
         gasLimit: 500000,
@@ -58,14 +59,14 @@ function makeBlock(baseFee: BN, transaction: TypedTransaction, txType: number) {
 
 tape('EIP3198 tests', (t) => {
   t.test('test EIP3198 gas fee and correct value', async (st) => {
-    // Test taken from the EIP.
-    const fee = new BN(7)
+    // Initial base fee for EIP1559
+    const fee = BigInt(1000000000)
     const tx = new FeeMarketEIP1559Transaction(
       {
-        maxFeePerGas: GWEI.muln(5),
-        maxPriorityFeePerGas: GWEI.muln(2),
+        maxFeePerGas: GWEI * BigInt(5),
+        maxPriorityFeePerGas: GWEI * BigInt(2),
         to: undefined, // Create contract
-        gasLimit: 210000,
+        gasLimit: BigInt(210000),
         data: '0x4800',
       },
       {
@@ -73,15 +74,13 @@ tape('EIP3198 tests', (t) => {
       }
     )
     const block = makeBlock(fee, tx, 2)
-    const vm = new VM({ common })
-    const account = await vm.stateManager.getAccount(sender)
-    account.balance = ETHER
-    await vm.stateManager.putAccount(sender, account)
+    const vm = await VM.create({ common })
+    await vm.stateManager.modifyAccountFields(sender, { balance: ETHER })
 
     // Track stack
 
     let stack: any = []
-    vm.on('step', (istep: InterpreterStep) => {
+    ;(<EVM>vm.evm).on('step', (istep: InterpreterStep) => {
       if (istep.opcode.name === 'STOP') {
         stack = istep.stack
       }
@@ -92,9 +91,9 @@ tape('EIP3198 tests', (t) => {
       block,
     })
     const txBaseFee = block.transactions[0].getBaseFee()
-    const gasUsed = results.gasUsed.sub(txBaseFee)
-    st.ok(gasUsed.eqn(2), 'gas used correct')
-    st.ok(stack[0].eq(fee), 'right item pushed on stack')
+    const gasUsed = results.totalGasSpent - txBaseFee
+    st.equal(gasUsed, BigInt(2), 'gas used correct')
+    st.equal(stack[0], fee, 'right item pushed on stack')
     st.end()
   })
 })

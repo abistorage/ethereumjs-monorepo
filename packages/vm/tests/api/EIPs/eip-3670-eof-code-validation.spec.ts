@@ -1,11 +1,11 @@
-import tape from 'tape'
-import VM from '../../../src'
+import * as tape from 'tape'
+import { VM } from '../../../src/vm'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { FeeMarketEIP1559Transaction } from '@ethereumjs/tx'
-import { Address, BN, privateToAddress } from 'ethereumjs-util'
-import * as eof from '../../../src/evm/opcodes/eof'
+import { Address, privateToAddress } from '@ethereumjs/util'
+import EOF from '@ethereumjs/evm/dist/eof'
 const pkey = Buffer.from('20'.repeat(32), 'hex')
-const GWEI = new BN('1000000000')
+const GWEI = BigInt('1000000000')
 const sender = new Address(privateToAddress(pkey))
 
 async function runTx(vm: VM, data: string, nonce: number) {
@@ -29,37 +29,37 @@ tape('EIP 3670 tests', (t) => {
   })
 
   t.test('EOF > validOpcodes() tests', (st) => {
-    st.ok(eof.validOpcodes(Buffer.from([0])), 'valid -- STOP ')
-    st.ok(eof.validOpcodes(Buffer.from([0xfe])), 'valid -- INVALID opcode')
-    st.ok(eof.validOpcodes(Buffer.from([0x60, 0xaa, 0])), 'valid - PUSH1 AA STOP')
+    st.ok(EOF.validOpcodes(Buffer.from([0])), 'valid -- STOP ')
+    st.ok(EOF.validOpcodes(Buffer.from([0xfe])), 'valid -- INVALID opcode')
+    st.ok(EOF.validOpcodes(Buffer.from([0x60, 0xaa, 0])), 'valid - PUSH1 AA STOP')
 
     Array.from([0x00, 0xf3, 0xfd, 0xfe, 0xff]).forEach((opcode) => {
       st.ok(
-        eof.validOpcodes(Buffer.from([0x60, 0xaa, opcode])),
+        EOF.validOpcodes(Buffer.from([0x60, 0xaa, opcode])),
         `code ends with valid terminating instruction 0x${opcode.toString(16)}`
       )
     })
 
-    st.notOk(eof.validOpcodes(Buffer.from([0xaa])), 'invalid -- AA -- undefined opcode')
+    st.notOk(EOF.validOpcodes(Buffer.from([0xaa])), 'invalid -- AA -- undefined opcode')
     st.notOk(
-      eof.validOpcodes(Buffer.from([0x7f, 0xaa, 0])),
+      EOF.validOpcodes(Buffer.from([0x7f, 0xaa, 0])),
       'invalid -- PUSH32 AA STOP -- truncated push'
     )
     st.notOk(
-      eof.validOpcodes(Buffer.from([0x61, 0xaa, 0])),
+      EOF.validOpcodes(Buffer.from([0x61, 0xaa, 0])),
       'invalid -- PUSH2 AA STOP -- truncated push'
     )
     st.notOk(
-      eof.validOpcodes(Buffer.from([0x60, 0xaa, 0x30])),
+      EOF.validOpcodes(Buffer.from([0x60, 0xaa, 0x30])),
       'invalid -- PUSH1 AA ADDRESS -- invalid terminal opcode'
     )
     st.end()
   })
 
   t.test('valid contract code transactions', async (st) => {
-    const vm = new VM({ common })
+    const vm = await VM.create({ common })
     const account = await vm.stateManager.getAccount(sender)
-    const balance = GWEI.muln(21000).muln(10000000)
+    const balance = GWEI * BigInt(21000) * BigInt(10000000)
     account.balance = balance
     await vm.stateManager.putAccount(sender, account)
 
@@ -73,9 +73,9 @@ tape('EIP 3670 tests', (t) => {
   })
 
   t.test('invalid contract code transactions', async (st) => {
-    const vm = new VM({ common: common })
+    const vm = await VM.create({ common: common })
     const account = await vm.stateManager.getAccount(sender)
-    const balance = GWEI.muln(21000).muln(10000000)
+    const balance = GWEI * BigInt(21000) * BigInt(10000000)
     account.balance = balance
     await vm.stateManager.putAccount(sender, account)
 

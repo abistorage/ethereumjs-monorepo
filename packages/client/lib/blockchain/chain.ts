@@ -1,11 +1,9 @@
 import { Block, BlockHeader } from '@ethereumjs/block'
 import Blockchain from '@ethereumjs/blockchain'
 import { ConsensusAlgorithm, Hardfork } from '@ethereumjs/common'
-import { BN, toBuffer } from 'ethereumjs-util'
+import { AbstractLevel } from 'abstract-level'
 import { Config } from '../config'
 import { Event } from '../types'
-// eslint-disable-next-line implicit-dependencies/no-implicit
-import type { LevelUp } from 'levelup'
 
 /**
  * The options that the Blockchain constructor can receive.
@@ -19,7 +17,7 @@ export interface ChainOptions {
   /**
    * Database to store blocks and metadata. Should be an abstract-leveldown compliant store.
    */
-  chainDB?: LevelUp
+  chainDB?: AbstractLevel<string | Buffer | Uint8Array, string | Buffer, string | Buffer>
 
   /**
    * Specify a blockchain which implements the Chain interface
@@ -39,12 +37,12 @@ export interface ChainBlocks {
   /**
    * The total difficulty of the blockchain
    */
-  td: BN
+  td: bigint
 
   /**
    * The height of the blockchain
    */
-  height: BN
+  height: bigint
 }
 
 /**
@@ -59,19 +57,12 @@ export interface ChainHeaders {
   /**
    * The total difficulty of the headerchain
    */
-  td: BN
+  td: bigint
 
   /**
    * The height of the headerchain
    */
-  height: BN
-}
-
-/**
- * common.genesis() <any> with all values converted to Buffer
- */
-export interface GenesisBlockParams {
-  [key: string]: Buffer
+  height: bigint
 }
 
 /**
@@ -80,20 +71,20 @@ export interface GenesisBlockParams {
  */
 export class Chain {
   public config: Config
-  public chainDB: LevelUp
+  public chainDB: AbstractLevel<string | Buffer | Uint8Array, string | Buffer, string | Buffer>
   public blockchain: Blockchain
   public opened: boolean
 
   private _headers: ChainHeaders = {
     latest: null,
-    td: new BN(0),
-    height: new BN(0),
+    td: BigInt(0),
+    height: BigInt(0),
   }
 
   private _blocks: ChainBlocks = {
     latest: null,
-    td: new BN(0),
-    height: new BN(0),
+    td: BigInt(0),
+    height: BigInt(0),
   }
 
   /**
@@ -109,7 +100,7 @@ export class Chain {
 
     this.blockchain =
       options.blockchain ??
-      new Blockchain({
+      new (Blockchain as any)({
         db: options.chainDB,
         common: this.config.chainCommon,
         hardforkByHeadBlockNumber: true,
@@ -127,33 +118,28 @@ export class Chain {
   private reset() {
     this._headers = {
       latest: null,
-      td: new BN(0),
-      height: new BN(0),
+      td: BigInt(0),
+      height: BigInt(0),
     }
     this._blocks = {
       latest: null,
-      td: new BN(0),
-      height: new BN(0),
+      td: BigInt(0),
+      height: BigInt(0),
     }
   }
 
   /**
    * Network ID
    */
-  get networkId(): BN {
-    return this.config.chainCommon.networkIdBN()
+  get networkId(): bigint {
+    return this.config.chainCommon.networkId()
   }
 
   /**
-   * Genesis block parameters
+   * Genesis block for the chain
    */
-  get genesis(): GenesisBlockParams {
-    const genesis = this.config.chainCommon.genesis()
-    const genesisParams: GenesisBlockParams = {}
-    Object.entries(genesis).forEach(([k, v]) => {
-      genesisParams[k] = toBuffer(v as string)
-    })
-    return genesisParams
+  get genesis() {
+    return this.blockchain.genesisBlock
   }
 
   /**
@@ -177,20 +163,20 @@ export class Chain {
   async open(): Promise<boolean | void> {
     if (this.opened) return false
     await this.blockchain.db.open()
-    await this.blockchain.initPromise
+    await (this.blockchain as any)._init()
     this.opened = true
     await this.update(false)
 
     this.config.chainCommon.on('hardforkChanged', async (hardfork: string) => {
       if (hardfork !== Hardfork.Merge) {
-        const block = this.config.chainCommon.hardforkBlockBN()
+        const block = this.config.chainCommon.hardforkBlock()
         this.config.logger.info(`New hardfork reached 🪢 ! hardfork=${hardfork} block=${block}`)
       } else {
-        const block = await this.getLatestBlock()
+        const block = await this.getCanonicalHeadBlock()
         const num = block.header.number
         const td = await this.blockchain.getTotalDifficulty(block.hash(), num)
         this.config.logger.info(`Merge hardfork reached 🐼 👉 👈 🐼 ! block=${num} td=${td}`)
-        this.config.logger.info(`First block for CL-framed execution: block=${num.addn(1)}`)
+        this.config.logger.info(`First block for CL-framed execution: block=${num + BigInt(1)}`)
       }
     })
   }
@@ -216,17 +202,17 @@ export class Chain {
 
     const headers: ChainHeaders = {
       latest: null,
-      td: new BN(0),
-      height: new BN(0),
+      td: BigInt(0),
+      height: BigInt(0),
     }
     const blocks: ChainBlocks = {
       latest: null,
-      td: new BN(0),
-      height: new BN(0),
+      td: BigInt(0),
+      height: BigInt(0),
     }
 
-    headers.latest = await this.getLatestHeader()
-    blocks.latest = await this.getLatestBlock()
+    headers.latest = await this.getCanonicalHeadHeader()
+    blocks.latest = await this.getCanonicalHeadBlock()
 
     headers.height = headers.latest.number
     blocks.height = blocks.latest.header.number
@@ -252,7 +238,7 @@ export class Chain {
    * @param reverse get blocks in reverse
    * @returns an array of the blocks
    */
-  async getBlocks(block: Buffer | BN, max = 1, skip = 0, reverse = false): Promise<Block[]> {
+  async getBlocks(block: Buffer | bigint, max = 1, skip = 0, reverse = false): Promise<Block[]> {
     if (!this.opened) throw new Error('Chain closed')
     return this.blockchain.getBlocks(block, max, skip, reverse)
   }
@@ -262,7 +248,7 @@ export class Chain {
    * @param block block hash or number
    * @throws if block is not found
    */
-  async getBlock(block: Buffer | BN): Promise<Block> {
+  async getBlock(block: Buffer | bigint): Promise<Block> {
     if (!this.opened) throw new Error('Chain closed')
     return this.blockchain.getBlock(block)
   }
@@ -307,7 +293,7 @@ export class Chain {
    * @returns list of block headers
    */
   async getHeaders(
-    block: Buffer | BN,
+    block: Buffer | bigint,
     max: number,
     skip: number,
     reverse: boolean
@@ -350,17 +336,17 @@ export class Chain {
   /**
    * Gets the latest header in the canonical chain
    */
-  async getLatestHeader(): Promise<BlockHeader> {
+  async getCanonicalHeadHeader(): Promise<BlockHeader> {
     if (!this.opened) throw new Error('Chain closed')
-    return this.blockchain.getLatestHeader()
+    return this.blockchain.getCanonicalHeadHeader()
   }
 
   /**
    * Gets the latest block in the canonical chain
    */
-  async getLatestBlock(): Promise<Block> {
+  async getCanonicalHeadBlock(): Promise<Block> {
     if (!this.opened) throw new Error('Chain closed')
-    return this.blockchain.getLatestBlock()
+    return this.blockchain.getCanonicalHeadBlock()
   }
 
   /**
@@ -369,7 +355,7 @@ export class Chain {
    * @param num the block number
    * @returns the td
    */
-  async getTd(hash: Buffer, num: BN): Promise<BN> {
+  async getTd(hash: Buffer, num: bigint): Promise<bigint> {
     if (!this.opened) throw new Error('Chain closed')
     return this.blockchain.getTotalDifficulty(hash, num)
   }

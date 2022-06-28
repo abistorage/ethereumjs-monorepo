@@ -1,17 +1,22 @@
-import tape, { Test } from 'tape'
+import * as tape from 'tape'
+type Test = tape.Test
 import { INVALID_PARAMS } from '../../../lib/rpc/error-code'
 import { params, baseRequest, baseSetup, setupChain } from '../helpers'
 import { checkError } from '../util'
-import genesisJSON from '../../testdata/geth-genesis/post-merge.json'
+import genesisJSON = require('../../testdata/geth-genesis/post-merge.json')
 import { FeeMarketEIP1559Transaction } from '@ethereumjs/tx'
-import { Address } from 'ethereumjs-util'
-import blocks from '../../testdata/blocks/beacon.json'
+import { Address } from '@ethereumjs/util'
+import blocks = require('../../testdata/blocks/beacon.json')
 import { HttpServer } from 'jayson'
-import { bufferToHex, zeros } from 'ethereumjs-util'
+import { bufferToHex, zeros } from '@ethereumjs/util'
+import { BlockHeader } from '@ethereumjs/block'
+import * as td from 'testdouble'
 
 const method = 'engine_newPayloadV1'
 
 const [blockData] = blocks
+
+const originalValidate = BlockHeader.prototype._consensusFormatValidation
 
 export const batchBlocks = async (t: Test, server: HttpServer) => {
   for (let i = 0; i < 3; i++) {
@@ -129,6 +134,9 @@ tape(`${method}: invalid terminal block`, async (t) => {
       terminalTotalDifficulty: 17179869185,
     },
   }
+
+  BlockHeader.prototype._consensusFormatValidation = td.func<any>()
+  td.replace('@ethereumjs/block', { BlockHeader })
 
   const { server } = await setupChain(genesisWithHigherTtd, 'post-merge', {
     engine: true,
@@ -288,4 +296,10 @@ tape(`${method}: parent hash equals to block hash`, async (t) => {
   }
 
   await baseRequest(t, server, req, 200, expectRes)
+})
+
+tape(`reset TD`, (t) => {
+  BlockHeader.prototype._consensusFormatValidation = originalValidate
+  td.reset()
+  t.end()
 })

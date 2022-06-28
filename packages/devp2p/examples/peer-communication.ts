@@ -1,12 +1,12 @@
-import assert from 'assert'
 import { randomBytes } from 'crypto'
 import LRUCache from 'lru-cache'
 import ms from 'ms'
 import chalk from 'chalk'
-import { rlp } from 'ethereumjs-util'
 import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { TypedTransaction, TransactionFactory } from '@ethereumjs/tx'
 import { Block, BlockHeader } from '@ethereumjs/block'
+import { arrToBufArr } from '@ethereumjs/util'
+import RLP from 'rlp'
 import * as devp2p from '../src/index'
 import { ETH, Peer } from '../src/index'
 
@@ -36,10 +36,9 @@ const REMOTE_CLIENTID_FILTER = [
 const CHECK_BLOCK_TITLE = 'Berlin Fork' // Only for debugging/console output
 const CHECK_BLOCK_NR = 12244000
 const CHECK_BLOCK = '1638380ab737e0e916bd1c7f23bd2bab2a532e44b90047f045f262ee21c42b21'
-const CHECK_BLOCK_HEADER = rlp.decode(
-  Buffer.from(
-    'f90219a0d44a4d33e28d7ea9edd12b69bd32b394587eee498b0e2543ce2bad1877ffbeaca01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347941ad91ee08f21be3de0ba2ba6918e714da6b45836a0fdec060ee45e55da9e36060fc95dddd0bdc47e447224666a895d9f0dc9adaa0ca0092d9fcc02ca9b372daec726704ce720d3aa366739868f4820ecaabadb9ac309a0974fee017515a46303f467b6fd50872994db1b0ea64d3455bad93ff9678aced9b90100356050004c5c89691add79838a01d4c302419252a4d3c96e9273908b7ee84660886c070607b4928c416a1800746a0d1dbb442d0baf06eea321422263726748600cc200e82aec08336863514d12d665718016989189c116bc0947046cc6718110586c11464a189000a11a41cc96991970153d88840768170244197e164c6204249b9091a0052ac85088c8108a4418dd2903690a036722623888ea14e90458a390a305a2342cb02766094f68c4100036330719848b48411614686717ab6068a46318204232429dc42020608802ceecd66c3c33a3a1fc6e82522049470328a4a81ba07c6604228ba94f008476005087a6804463696b41002650c0fdf548448a90408717ca31b6d618e883bad42083be153b83bdfbb1846078104798307834383639373636353666366532303530366636663663a0ae1de0acd35a98e211c7e276ad7524bb84a5e1b8d33dd7d1c052b095b564e8b888cca66773148b6e12',
-    'hex'
+const CHECK_BLOCK_HEADER = arrToBufArr(
+  RLP.decode(
+    '0xf90219a0d44a4d33e28d7ea9edd12b69bd32b394587eee498b0e2543ce2bad1877ffbeaca01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347941ad91ee08f21be3de0ba2ba6918e714da6b45836a0fdec060ee45e55da9e36060fc95dddd0bdc47e447224666a895d9f0dc9adaa0ca0092d9fcc02ca9b372daec726704ce720d3aa366739868f4820ecaabadb9ac309a0974fee017515a46303f467b6fd50872994db1b0ea64d3455bad93ff9678aced9b90100356050004c5c89691add79838a01d4c302419252a4d3c96e9273908b7ee84660886c070607b4928c416a1800746a0d1dbb442d0baf06eea321422263726748600cc200e82aec08336863514d12d665718016989189c116bc0947046cc6718110586c11464a189000a11a41cc96991970153d88840768170244197e164c6204249b9091a0052ac85088c8108a4418dd2903690a036722623888ea14e90458a390a305a2342cb02766094f68c4100036330719848b48411614686717ab6068a46318204232429dc42020608802ceecd66c3c33a3a1fc6e82522049470328a4a81ba07c6604228ba94f008476005087a6804463696b41002650c0fdf548448a90408717ca31b6d618e883bad42083be153b83bdfbb1846078104798307834383639373636353666366532303530366636663663a0ae1de0acd35a98e211c7e276ad7524bb84a5e1b8d33dd7d1c052b095b564e8b888cca66773148b6e12'
   )
 )
 
@@ -103,7 +102,10 @@ rlpx.on('peer:added', (peer) => {
   let forkDrop: NodeJS.Timeout
   let forkVerified = false
   eth.once('status', () => {
-    eth.sendMessage(devp2p.ETH.MESSAGE_CODES.GET_BLOCK_HEADERS, [1, [CHECK_BLOCK_NR, 1, 0, 0]])
+    eth.sendMessage(devp2p.ETH.MESSAGE_CODES.GET_BLOCK_HEADERS, [
+      Buffer.from([1]),
+      [devp2p.int2buffer(CHECK_BLOCK_NR), Buffer.from([1]), Buffer.from([]), Buffer.from([])],
+    ])
     forkDrop = setTimeout(() => {
       peer.disconnect(devp2p.DISCONNECT_REASONS.USELESS_PEER)
     }, ms('15s'))
@@ -125,7 +127,10 @@ rlpx.on('peer:added', (peer) => {
           const blockHash = item[0]
           if (blocksCache.has(blockHash.toString('hex'))) continue
           setTimeout(() => {
-            eth.sendMessage(devp2p.ETH.MESSAGE_CODES.GET_BLOCK_HEADERS, [2, [blockHash, 1, 0, 0]])
+            eth.sendMessage(devp2p.ETH.MESSAGE_CODES.GET_BLOCK_HEADERS, [
+              Buffer.from([2]),
+              [blockHash, Buffer.from([1]), Buffer.from([]), Buffer.from([])],
+            ])
             requests.headers.push(blockHash)
           }, ms('0.1s'))
         }
@@ -188,7 +193,10 @@ rlpx.on('peer:added', (peer) => {
             if (header.hash().equals(blockHash)) {
               isValidPayload = true
               setTimeout(() => {
-                eth.sendMessage(devp2p.ETH.MESSAGE_CODES.GET_BLOCK_BODIES, [3, [blockHash]])
+                eth.sendMessage(devp2p.ETH.MESSAGE_CODES.GET_BLOCK_BODIES, [
+                  Buffer.from([3]),
+                  [blockHash],
+                ])
                 requests.bodies.push(header)
               }, ms('0.1s'))
               break
@@ -292,7 +300,7 @@ rlpx.on('peer:removed', (peer, reasonCode, disconnectWe) => {
 rlpx.on('peer:error', (peer, err) => {
   if (err.code === 'ECONNRESET') return
 
-  if (err instanceof assert.AssertionError) {
+  if (err instanceof Error) {
     const peerId = peer.getId()
     if (peerId !== null) dpt.banPeer(peerId, ms('5m'))
 
@@ -339,17 +347,13 @@ function onNewTx(tx: TypedTransaction, peer: Peer) {
 const blocksCache = new LRUCache({ max: 100 })
 function onNewBlock(block: Block, peer: Peer) {
   const blockHashHex = block.hash().toString('hex')
-  const blockNumber = block.header.number.toNumber()
+  const blockNumber = block.header.number
   if (blocksCache.has(blockHashHex)) return
 
   blocksCache.set(blockHashHex, true)
-  console.log(
-    `----------------------------------------------------------------------------------------------------------`
-  )
+  console.log()
   console.log(`New block ${blockNumber}: ${blockHashHex} (from ${getPeerAddr(peer)})`)
-  console.log(
-    `----------------------------------------------------------------------------------------------------------`
-  )
+  console.log('-'.repeat(105))
   for (const tx of block.transactions) onNewTx(tx, peer)
 }
 

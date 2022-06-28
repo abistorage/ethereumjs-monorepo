@@ -1,27 +1,34 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Block } from '@ethereumjs/block'
-import Blockchain from '@ethereumjs/blockchain'
+import Blockchain, { EthashConsensus } from '@ethereumjs/blockchain'
 import Common, { ConsensusAlgorithm } from '@ethereumjs/common'
 import { TransactionFactory } from '@ethereumjs/tx'
-import { addHexPrefix, BN, toBuffer, rlp, stripHexPrefix } from 'ethereumjs-util'
-import { SecureTrie as Trie } from 'merkle-patricia-tree'
+import { bufferToBigInt, isHexPrefixed, stripHexPrefix, toBuffer } from '@ethereumjs/util'
+import RLP from 'rlp'
+import { SecureTrie as Trie } from '@ethereumjs/trie'
 import { setupPreConditions, verifyPostConditions } from '../../util'
+import { Level } from 'level'
+import { MemoryLevel } from 'memory-level'
 
-const level = require('level')
-const levelMem = require('level-mem')
+function formatBlockHeader(data: any) {
+  const formatted: any = {}
+  for (const [key, value] of Object.entries(data) as [string, string][]) {
+    formatted[key] = isHexPrefixed(value) ? value : BigInt(value)
+  }
+  return formatted
+}
 
 export default async function runBlockchainTest(options: any, testData: any, t: tape.Test) {
   // ensure that the test data is the right fork data
   if (testData.network != options.forkConfigTestSuite) {
-    t.comment('skipping test: no data available for ' + <string>options.forkConfigTestSuite)
+    t.comment(`skipping test: no data available for ${options.forkConfigTestSuite}`)
     return
   }
 
   // fix for BlockchainTests/GeneralStateTests/stRandom/*
   testData.lastblockhash = stripHexPrefix(testData.lastblockhash)
 
-  const blockchainDB = levelMem()
-  const cacheDB = level('./.cachedb')
+  const cacheDB = new Level('./.cachedb')
   const state = new Trie()
 
   const { common }: { common: Common } = options
@@ -47,8 +54,8 @@ export default async function runBlockchainTest(options: any, testData: any, t: 
     t.ok(genesisBlock.serialize().equals(rlp), 'correct genesis RLP')
   }
 
-  const blockchain = new Blockchain({
-    db: blockchainDB,
+  const blockchain = await Blockchain.create({
+    db: new MemoryLevel(),
     common,
     validateBlocks: true,
     validateConsensus: validatePow,
@@ -56,7 +63,7 @@ export default async function runBlockchainTest(options: any, testData: any, t: 
   })
 
   if (validatePow) {
-    blockchain._ethash!.cacheDB = cacheDB
+    ;(blockchain.consensus as EthashConsensus)._ethash.cacheDB = cacheDB as any
   }
 
   let VM
@@ -68,18 +75,14 @@ export default async function runBlockchainTest(options: any, testData: any, t: 
 
   const begin = Date.now()
 
-  const vm = new VM({
+  const vm = await VM.create({
     state,
     blockchain,
     common,
   })
 
-  // Need to await the init promise: in some tests, we do not run the iterator (which awaits the initPromise)
-  // If the initPromise does not finish, the `rawHead` of `blockchain.meta()` is still `undefined`.
-  await blockchain.initPromise
-
   // set up pre-state
-  await setupPreConditions(vm.stateManager._trie, testData)
+  await setupPreConditions(vm.eei.state, testData)
 
   t.ok(vm.stateManager._trie.root.equals(genesisBlock.header.stateRoot), 'correct pre stateRoot')
 
@@ -91,7 +94,7 @@ export default async function runBlockchainTest(options: any, testData: any, t: 
     }
   }
 
-  let currentBlock = new BN(0)
+  let currentBlock = BigInt(0)
   for (const raw of testData.blocks) {
     const paramFork = `expectException${options.forkConfigTestSuite}`
     // Two naming conventions in ethereum/tests to indicate "exception occurs on all HFs" semantics
@@ -106,8 +109,8 @@ export default async function runBlockchainTest(options: any, testData: any, t: 
     // The block library cannot be used, as this throws on certain EIP1559 blocks when trying to convert
     try {
       const blockRlp = Buffer.from(raw.rlp.slice(2), 'hex')
-      const decodedRLP: any = rlp.decode(blockRlp)
-      currentBlock = new BN(decodedRLP[0][8])
+      const decodedRLP: any = RLP.decode(Uint8Array.from(blockRlp))
+      currentBlock = bufferToBigInt(decodedRLP[0][8])
     } catch (e: any) {
       await handleError(e, expectException)
       continue
@@ -115,7 +118,7 @@ export default async function runBlockchainTest(options: any, testData: any, t: 
 
     try {
       // Update common HF
-      common.setHardforkByBlockNumber(currentBlock.toNumber())
+      common.setHardforkByBlockNumber(currentBlock)
 
       // transactionSequence is provided when txs are expected to be rejected.
       // To run this field we try to import them on the current state.
@@ -138,7 +141,7 @@ export default async function runBlockchainTest(options: any, testData: any, t: 
             if (!shouldFail) {
               t.fail(`tx should not fail, but failed: ${e.message}`)
             } else {
-              t.pass('tx succesfully failed')
+              t.pass('tx successfully failed')
             }
           }
         }
@@ -155,10 +158,20 @@ export default async function runBlockchainTest(options: any, testData: any, t: 
       // TODO: Add option to `runBlockchain` not to generate genesis state.
       vm._common.genesis().stateRoot = vm.stateManager._trie.root
       try {
-        await vm.runBlockchain()
+        await blockchain.iterator('vm', async (block: Block) => {
+          const parentBlock = await blockchain!.getBlock(block.header.parentHash)
+          const parentState = parentBlock.header.stateRoot
+          // run block, update head if valid
+          try {
+            await vm.runBlock({ block, root: parentState })
+            // set as new head block
+          } catch (error: any) {
+            // remove invalid block
+            await blockchain!.delBlock(block.header.hash())
+            throw error
+          }
+        })
       } catch (e: any) {
-        const headBlock = await vm.blockchain.getHead()
-
         // if the test fails, then block.header is the prev because
         // vm.runBlock has a check that prevents the actual postState from being
         // imported if it is not equal to the expected postState. it is useful
@@ -166,6 +179,7 @@ export default async function runBlockchainTest(options: any, testData: any, t: 
         // testData.postState to the actual postState, rather than to the preState.
         if (!options.debug) {
           // make sure the state is set before checking post conditions
+          const headBlock = await vm.blockchain.getIteratorHead()
           vm.stateManager._trie.root = headBlock.header.stateRoot
         }
 
@@ -175,34 +189,27 @@ export default async function runBlockchainTest(options: any, testData: any, t: 
 
         throw e
       }
+
       await cacheDB.close()
 
       if (expectException) {
-        t.fail('expected exception but test did not throw an exception: ' + <string>expectException)
+        t.fail(`expected exception but test did not throw an exception: ${expectException}`)
         return
       }
     } catch (error: any) {
       // caught an error, reduce block number
-      currentBlock.isubn(1)
+      currentBlock--
       await handleError(error, expectException)
     }
   }
   t.equal(
-    (blockchain.meta as any).rawHead.toString('hex'),
+    (blockchain as any)._headHeaderHash.toString('hex'),
     testData.lastblockhash,
     'correct last header block'
   )
+
   const end = Date.now()
   const timeSpent = `${(end - begin) / 1000} secs`
   t.comment(`Time: ${timeSpent}`)
   await cacheDB.close()
-}
-
-function formatBlockHeader(data: any) {
-  const r: any = {}
-  const keys = Object.keys(data)
-  keys.forEach(function (key) {
-    r[key] = addHexPrefix(data[key])
-  })
-  return r
 }

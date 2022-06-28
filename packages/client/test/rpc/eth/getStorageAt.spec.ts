@@ -1,8 +1,10 @@
-import tape from 'tape'
+import * as tape from 'tape'
 import { Block } from '@ethereumjs/block'
 import Blockchain from '@ethereumjs/blockchain'
+import Common, { Chain, Hardfork } from '@ethereumjs/common'
 import { Transaction } from '@ethereumjs/tx'
-import { Address, BN, bnToHex, bufferToHex, keccak } from 'ethereumjs-util'
+import { keccak256 } from 'ethereum-cryptography/keccak'
+import { Address, bigIntToHex, bufferToHex, toBuffer } from '@ethereumjs/util'
 import { INVALID_PARAMS } from '../../../lib/rpc/error-code'
 import { startRPC, createManager, createClient, params, baseRequest } from '../helpers'
 import { checkError } from '../util'
@@ -10,10 +12,16 @@ import type { FullEthereumService } from '../../../lib/service'
 
 const method = 'eth_getStorageAt'
 
-tape(`${method}: call with valid arguments`, async (t) => {
-  const blockchain = await Blockchain.create({ validateBlocks: false, validateConsensus: false })
+const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.Istanbul })
 
-  const client = createClient({ blockchain, includeVM: true })
+tape(`${method}: call with valid arguments`, async (t) => {
+  const blockchain = await Blockchain.create({
+    common,
+    validateBlocks: false,
+    validateConsensus: false,
+  })
+
+  const client = createClient({ blockchain, commonChain: common, includeVM: true })
   const manager = createManager(client)
   const server = startRPC(manager.getMethods())
 
@@ -44,11 +52,11 @@ tape(`${method}: call with valid arguments`, async (t) => {
 
   // construct block with tx
   const gasLimit = 2000000
-  const tx = Transaction.fromTxData({ gasLimit, data }, { freeze: false })
+  const tx = Transaction.fromTxData({ gasLimit, data }, { common, freeze: false })
   tx.getSenderAddress = () => {
     return address
   }
-  const parent = await blockchain.getLatestHeader()
+  const parent = await blockchain.getCanonicalHeadHeader()
   const block = Block.fromBlockData(
     {
       header: {
@@ -57,7 +65,7 @@ tape(`${method}: call with valid arguments`, async (t) => {
         gasLimit,
       },
     },
-    { calcDifficultyFromHeader: parent }
+    { common, calcDifficultyFromHeader: parent }
   )
   block.transactions[0] = tx
 
@@ -74,10 +82,10 @@ tape(`${method}: call with valid arguments`, async (t) => {
     to: createdAddress!.toString(),
     from: address.toString(),
     data: `0x${funcHash}`,
-    gasLimit: bnToHex(new BN(530000)),
+    gasLimit: bigIntToHex(BigInt(530000)),
     nonce: 1,
   }
-  const storeTx = Transaction.fromTxData(storeTxData, { freeze: false })
+  const storeTx = Transaction.fromTxData(storeTxData, { common, freeze: false })
   storeTx.getSenderAddress = () => {
     return address
   }
@@ -89,7 +97,7 @@ tape(`${method}: call with valid arguments`, async (t) => {
         gasLimit,
       },
     },
-    { calcDifficultyFromHeader: block.header }
+    { common, calcDifficultyFromHeader: block.header }
   )
   block2.transactions[0] = storeTx
 
@@ -113,11 +121,13 @@ tape(`${method}: call with valid arguments`, async (t) => {
 
   // verify storage of pos1 is accurate
   // pos1["0xccfd725760a68823ff1e062f4cc97e1360e8d997"]
-  const key = keccak(
-    Buffer.from(
-      '000000000000000000000000ccfd725760a68823ff1e062f4cc97e1360e8d997' +
-        '0000000000000000000000000000000000000000000000000000000000000001',
-      'hex'
+  const key = toBuffer(
+    keccak256(
+      Buffer.from(
+        '000000000000000000000000ccfd725760a68823ff1e062f4cc97e1360e8d997' +
+          '0000000000000000000000000000000000000000000000000000000000000001',
+        'hex'
+      )
     )
   )
   req = params(method, [createdAddress!.toString(), bufferToHex(key), 'latest'])

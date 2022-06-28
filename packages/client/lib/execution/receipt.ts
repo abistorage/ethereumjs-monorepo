@@ -1,8 +1,15 @@
-import { PreByzantiumTxReceipt, PostByzantiumTxReceipt, TxReceipt } from '@ethereumjs/vm/dist/types'
-import { Log } from '@ethereumjs/vm/dist/evm/types'
-import Bloom from '@ethereumjs/vm/dist/bloom'
+import { PreByzantiumTxReceipt, PostByzantiumTxReceipt, TxReceipt, Bloom } from '@ethereumjs/vm'
+import { Log } from '@ethereumjs/evm'
 import { TypedTransaction } from '@ethereumjs/tx'
-import { rlp, intToBuffer, bufferToInt } from 'ethereumjs-util'
+import {
+  arrToBufArr,
+  bigIntToBuffer,
+  bufArrToArr,
+  bufferToBigInt,
+  bufferToInt,
+  intToBuffer,
+} from '@ethereumjs/util'
+import RLP from 'rlp'
 import { MetaDBManager, DBKey } from '../util/metaDBManager'
 import type { Block } from '@ethereumjs/block'
 
@@ -164,7 +171,7 @@ export class ReceiptsManager extends MetaDBManager {
   ): Promise<GetLogsReturn> {
     const returnedLogs: GetLogsReturn = []
     let returnedLogsSize = 0
-    for (const i = from.header.number.clone(); i.lte(to.header.number); i.iaddn(1)) {
+    for (let i = from.header.number; i <= to.header.number; i++) {
       const block = await this.chain.getBlock(i)
       const receipts = await this.getReceipts(block.hash())
       if (receipts.length === 0) continue
@@ -238,7 +245,7 @@ export class ReceiptsManager extends MetaDBManager {
         if (operation === IndexOperation.Save) {
           const withinTxLookupLimit =
             this.config.txLookupLimit === 0 ||
-            this.chain.headers.height.subn(this.config.txLookupLimit).lt(block.header.number)
+            this.chain.headers.height - BigInt(this.config.txLookupLimit) < block.header.number
           if (withinTxLookupLimit) {
             for (const [i, tx] of block.transactions.entries()) {
               const index: TxHashIndex = [block.hash(), i]
@@ -248,8 +255,8 @@ export class ReceiptsManager extends MetaDBManager {
           }
           if (this.config.txLookupLimit > 0) {
             // Remove tx hashes for one block past txLookupLimit
-            const limit = this.chain.headers.height.subn(this.config.txLookupLimit)
-            if (limit.ltn(0)) return
+            const limit = this.chain.headers.height - BigInt(this.config.txLookupLimit)
+            if (limit < BigInt(0)) return
             const blockDelIndexes = await this.chain.getBlock(limit)
             void this.updateIndex(IndexOperation.Delete, IndexType.TxHash, blockDelIndexes)
           }
@@ -298,16 +305,20 @@ export class ReceiptsManager extends MetaDBManager {
       case RlpType.Receipts:
         if (conversion === RlpConvert.Encode) {
           value = value as TxReceipt[]
-          return rlp.encode(
-            value.map((r) => [
-              (r as PreByzantiumTxReceipt).stateRoot ??
-                intToBuffer((r as PostByzantiumTxReceipt).status),
-              r.gasUsed,
-              this.rlp(RlpConvert.Encode, RlpType.Logs, r.logs),
-            ])
+          return Buffer.from(
+            RLP.encode(
+              bufArrToArr(
+                value.map((r) => [
+                  (r as PreByzantiumTxReceipt).stateRoot ??
+                    intToBuffer((r as PostByzantiumTxReceipt).status),
+                  bigIntToBuffer(r.cumulativeBlockGasUsed),
+                  this.rlp(RlpConvert.Encode, RlpType.Logs, r.logs),
+                ])
+              )
+            )
           )
         } else {
-          const decoded = rlp.decode(value as Buffer) as unknown as rlpReceipt[]
+          const decoded = arrToBufArr(RLP.decode(Uint8Array.from(value as Buffer))) as rlpReceipt[]
           return decoded.map((r) => {
             const gasUsed = r[1]
             const logs = this.rlp(RlpConvert.Decode, RlpType.Logs, r[2])
@@ -315,14 +326,14 @@ export class ReceiptsManager extends MetaDBManager {
               // Pre-Byzantium Receipt
               return {
                 stateRoot: r[0],
-                gasUsed,
+                cumulativeBlockGasUsed: bufferToBigInt(gasUsed),
                 logs,
               } as PreByzantiumTxReceipt
             } else {
               // Post-Byzantium Receipt
               return {
                 status: bufferToInt(r[0]),
-                gasUsed,
+                cumulativeBlockGasUsed: bufferToBigInt(gasUsed),
                 logs,
               } as PostByzantiumTxReceipt
             }
@@ -330,16 +341,18 @@ export class ReceiptsManager extends MetaDBManager {
         }
       case RlpType.Logs:
         if (conversion === RlpConvert.Encode) {
-          return rlp.encode(value as Log[])
+          return Buffer.from(RLP.encode(bufArrToArr(value as Log[])))
         } else {
-          return rlp.decode(value as Buffer) as unknown as Log[]
+          return arrToBufArr(RLP.decode(Uint8Array.from(value as Buffer))) as Log[]
         }
       case RlpType.TxHash:
         if (conversion === RlpConvert.Encode) {
           const [blockHash, txIndex] = value as TxHashIndex
-          return rlp.encode([blockHash, intToBuffer(txIndex)])
+          return Buffer.from(RLP.encode(bufArrToArr([blockHash, intToBuffer(txIndex)])))
         } else {
-          const [blockHash, txIndex] = rlp.decode(value as Buffer) as unknown as rlpTxHash
+          const [blockHash, txIndex] = arrToBufArr(
+            RLP.decode(Uint8Array.from(value as Buffer))
+          ) as rlpTxHash
           return [blockHash, bufferToInt(txIndex)] as TxHashIndex
         }
       default:

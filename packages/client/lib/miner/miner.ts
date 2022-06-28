@@ -1,14 +1,14 @@
 import Ethash, { Solution, Miner as EthashMiner } from '@ethereumjs/ethash'
 import { BlockHeader } from '@ethereumjs/block'
-import { BN } from 'ethereumjs-util'
-import { ConsensusType, Hardfork } from '@ethereumjs/common'
+import { CliqueConsensus } from '@ethereumjs/blockchain'
+import { ConsensusType, Hardfork, CliqueConfig } from '@ethereumjs/common'
 import { Event } from '../types'
 import { Config } from '../config'
 import { FullEthereumService } from '../service'
 import { VMExecution } from '../execution'
 import type { FullSynchronizer } from '../sync'
 
-const level = require('level-mem')
+import { MemoryLevel } from 'memory-level'
 
 export interface MinerOptions {
   /* Config */
@@ -50,10 +50,11 @@ export class Miner {
     this.execution = this.service.execution
     this.running = false
     this.assembling = false
-    this.period = (this.config.chainCommon.consensusConfig().period ?? this.DEFAULT_PERIOD) * 1000 // defined in ms for setTimeout use
+    this.period =
+      ((this.config.chainCommon.consensusConfig() as CliqueConfig).period ?? this.DEFAULT_PERIOD) *
+      1000 // defined in ms for setTimeout use
     if (this.config.chainCommon.consensusType() === ConsensusType.ProofOfWork) {
-      const cacheDB = level()
-      this.ethash = new Ethash(cacheDB)
+      this.ethash = new Ethash(new MemoryLevel())
     }
   }
 
@@ -87,9 +88,11 @@ export class Miner {
       // delay signing by rand(SIGNER_COUNT * 500ms)
       const [signerAddress] = this.config.accounts[0]
       const { blockchain } = this.service.chain
-      const inTurn = await blockchain.cliqueSignerInTurn(signerAddress)
+      const inTurn = await (blockchain.consensus as CliqueConsensus).cliqueSignerInTurn(
+        signerAddress
+      )
       if (!inTurn) {
-        const signerCount = blockchain.cliqueActiveSigners().length
+        const signerCount = (blockchain.consensus as CliqueConsensus).cliqueActiveSigners().length
         timeout += Math.random() * signerCount * 500
       }
     }
@@ -128,8 +131,8 @@ export class Miner {
   private async chainUpdated() {
     this.ethashMiner?.stop()
     const latestBlockHeader = this.latestBlockHeader()
-    const target = latestBlockHeader.timestamp.muln(1000).addn(this.period).sub(new BN(Date.now()))
-    const timeout = BN.max(new BN(0), target).toNumber()
+    const target = Number(latestBlockHeader.timestamp) * 1000 + this.period - Date.now()
+    const timeout = BigInt(0) > target ? 0 : target
     this.config.logger.debug(
       `Miner: Chain updated with block ${
         latestBlockHeader.number
@@ -176,7 +179,8 @@ export class Miner {
     this.config.events.once(Event.CHAIN_UPDATED, _boundSetInterruptHandler)
 
     const parentBlock = this.service.chain.blocks.latest!
-    const number = parentBlock.header.number.addn(1)
+    //eslint-disable-next-line
+    const number = parentBlock.header.number + BigInt(1)
     let { gasLimit } = parentBlock.header
 
     if (this.config.chainCommon.consensusType() === ConsensusType.ProofOfAuthority) {
@@ -186,7 +190,7 @@ export class Miner {
         { number },
         { common: this.config.chainCommon, cliqueSigner }
       )
-      if ((this.service.chain.blockchain as any).cliqueCheckRecentlySigned(header)) {
+      if ((this.service.chain.blockchain as any).consensus.cliqueCheckRecentlySigned(header)) {
         this.config.logger.info(`Miner: We have too recently signed, waiting for next block`)
         this.assembling = false
         return
@@ -203,11 +207,11 @@ export class Miner {
     // Use a copy of the vm to not modify the existing state.
     // The state will be updated when the newly assembled block
     // is inserted into the canonical chain.
-    const vmCopy = this.execution.vm.copy()
+    const vmCopy = await this.execution.vm.copy()
 
     // Set the state root to ensure the resulting state
     // is based on the parent block's state
-    await vmCopy.stateManager.setStateRoot(parentBlock.header.stateRoot)
+    await vmCopy.eei.state.setStateRoot(parentBlock.header.stateRoot)
 
     let difficulty
     let cliqueSigner
@@ -216,20 +220,21 @@ export class Miner {
       const [signerAddress, signerPrivKey] = this.config.accounts[0]
       cliqueSigner = signerPrivKey
       // Determine if signer is INTURN (2) or NOTURN (1)
-      inTurn = await vmCopy.blockchain.cliqueSignerInTurn(signerAddress)
+      inTurn = await (vmCopy.blockchain.consensus as CliqueConsensus).cliqueSignerInTurn(
+        signerAddress
+      )
       difficulty = inTurn ? 2 : 1
     }
 
     let baseFeePerGas
-    const londonHardforkBlock = this.config.chainCommon.hardforkBlockBN(Hardfork.London)
-    const isInitialEIP1559Block = londonHardforkBlock && number.eq(londonHardforkBlock)
+    const londonHardforkBlock = this.config.chainCommon.hardforkBlock(Hardfork.London)
+    const isInitialEIP1559Block = londonHardforkBlock && number === londonHardforkBlock
     if (isInitialEIP1559Block) {
       // Get baseFeePerGas from `paramByEIP` since 1559 not currently active on common
-      baseFeePerGas = new BN(
-        this.config.chainCommon.paramByEIP('gasConfig', 'initialBaseFee', 1559)
-      )
+      baseFeePerGas =
+        this.config.chainCommon.paramByEIP('gasConfig', 'initialBaseFee', 1559) ?? BigInt(0)
       // Set initial EIP1559 block gas limit to 2x parent gas limit per logic in `block.validateGasLimit`
-      gasLimit = gasLimit.muln(2)
+      gasLimit = gasLimit * BigInt(2)
     } else if (this.config.chainCommon.isActivatedEIP(1559)) {
       baseFeePerGas = parentBlock.header.calcNextBaseFee()
     }
@@ -271,11 +276,11 @@ export class Miner {
         await blockBuilder.addTransaction(txs[index])
       } catch (error: any) {
         if (error.message === 'tx has a higher gas limit than the remaining gas in the block') {
-          if (blockBuilder.gasUsed.gt(gasLimit.subn(21000))) {
+          if (blockBuilder.gasUsed > gasLimit - BigInt(21000)) {
             // If block has less than 21000 gas remaining, consider it full
             blockFull = true
             this.config.logger.info(
-              `Miner: Assembled block full (gasLeft: ${gasLimit.sub(blockBuilder.gasUsed)})`
+              `Miner: Assembled block full (gasLeft: ${gasLimit - blockBuilder.gasUsed})`
             )
           }
         } else {
