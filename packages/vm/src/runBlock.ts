@@ -154,6 +154,7 @@ export default async function runBlock(this: VM, opts: RunBlockOpts): Promise<Ru
       const msg = _errorMsg('invalid gasUsed', this, block)
       throw new Error(msg)
     }
+    /** @disable module
     if (!stateRoot.equals(block.header.stateRoot)) {
       if (this.DEBUG) {
         debug(
@@ -165,6 +166,7 @@ export default async function runBlock(this: VM, opts: RunBlockOpts): Promise<Ru
       const msg = _errorMsg('invalid block stateRoot', this, block)
       throw new Error(msg)
     }
+    */
   }
 
   const results: RunBlockResult = {
